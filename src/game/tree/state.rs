@@ -1,0 +1,105 @@
+use crate::game::action::ActionType;
+
+use super::super::action::Action;
+use super::state_data::StateData;
+
+pub trait State<'a> {
+    // Ugly getters, needed for polymorphism
+    fn get_state_data(&self) -> &StateData;
+
+    fn get_player_count(&self) -> u32 {
+        return self.get_state_data().player_count;
+    }
+    fn get_player_to_move(&self) -> i32 {
+        return self.get_state_data().player_to_move;
+    }
+    fn is_player_in(&self, player_index: u32) -> bool {
+        return self.get_state_data().is_player_in[player_index as usize];
+    }
+    fn get_last_actions(&self) -> &Vec<Action> {
+        return &self.get_state_data().last_actions;
+    }
+    fn get_to_move_bet(&self) -> u32 {
+        return self.get_state_data().bets[self.get_player_to_move() as usize];
+    }
+    fn get_to_move_stack(&self) -> u32 {
+        return self.get_state_data().stacks[self.get_player_to_move() as usize];
+    }
+
+    // Functions implemented by the state
+    fn get_next_player(&self, last_to_move_temp: i32) -> i32 {
+        let mut i = (self.get_player_to_move() + 1) % self.get_player_count() as i32;
+        let last_to_move_temp = (last_to_move_temp + 1) % self.get_player_count() as i32;
+        while i != last_to_move_temp {
+            if self.is_player_in(i as u32) {
+                return i as i32;
+            }
+            i = (i + 1) % self.get_player_count() as i32;
+        }
+
+        return -1;
+    }
+
+    fn get_last_player(&self, player_that_raised: i32) -> i32 {
+        let mut last: i32 = -1;
+        for i in (player_that_raised + 1) % self.get_player_count() as i32
+            ..(player_that_raised) % self.get_player_count() as i32
+        {
+            if self.is_player_in(i as u32) {
+                last = i as i32;
+            }
+        }
+        return last;
+    }
+
+    fn get_number_of_players_that_need_to_act(&self) -> u32 {
+        // does not include all-in players
+        let mut count = 0;
+        for i in 0..self.get_player_count() {
+            if self.is_player_in(i)
+                && !matches!(
+                    self.get_last_actions()[i as usize].action_type,
+                    ActionType::AllIn
+                )
+            {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    fn get_active_players(&self, new_is_player_in: &Vec<bool>) -> u32 {
+        let mut count = 0;
+        for i in 0..self.get_player_count() {
+            if new_is_player_in[i as usize] {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    fn get_number_of_all_in_players(&self) -> u32 {
+        let mut count = 0;
+        for i in 0..self.get_player_count() {
+            if matches!(
+                self.get_last_actions()[i as usize].action_type,
+                ActionType::AllIn
+            ) {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    fn is_player_in_hand(&self, player_index: u32) -> bool {
+        return self.is_player_in(player_index);
+    }
+
+    fn is_player_turn(&self, player_index: i32) -> bool {
+        return self.get_player_to_move() == player_index;
+    }
+
+    // Functions that need to be implemented by the state
+    fn create_children(&mut self) -> ();
+    fn get_reward(&self, traverser: u32) -> f32;
+}

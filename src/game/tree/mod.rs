@@ -1,57 +1,47 @@
+use self::state_chance::StateChance;
+use self::state_data::StateData;
+
 use super::action::Action;
 use super::action::ActionConfig;
-use super::table::Table;
 
-pub struct Tree {
+mod state;
+mod state_chance;
+mod state_data;
+mod state_play;
+mod state_terminal;
+
+pub struct Tree<'a> {
     player_cnt: u32,
-    table: Table,
-    blind_value: u32,
-    action_config: ActionConfig,
+    action_config: &'a ActionConfig,
+    history: Vec<Action>,
+    root: StateChance<'a>,
 }
 
-// Add different tree nodes implementations
-mod chance;
-mod play;
-mod terminal;
-
-impl Tree {
-    pub fn new(
-        player_cnt: u32,
-        stack_size: u32,
-        blind_value: u32,
-        action_config: ActionConfig,
-    ) -> Tree {
+impl<'a> Tree<'a> {
+    pub fn new(player_cnt: u32, action_config: &ActionConfig) -> Tree {
+        let new_state = StateChance {
+            action_config: action_config,
+            state_data: StateData::new(player_cnt, action_config.buy_in),
+            children: Vec::new(),
+        };
         Tree {
             player_cnt: player_cnt,
-            table: Table::new(player_cnt, stack_size),
-            blind_value: blind_value,
             action_config: action_config,
+            history: Vec::new(),
+            root: new_state,
         }
     }
 
     fn reset(&mut self) -> () {
         // Shuffle the deck
-        self.table.reset();
+        self.root = StateChance {
+            action_config: self.action_config,
+            state_data: StateData::new(self.player_cnt, self.action_config.buy_in),
+            children: Vec::new(),
+        };
     }
 
-    pub fn play_hand(&mut self) -> Vec<Action> {
+    pub fn play_hand(&mut self) -> () {
         self.reset();
-
-        // Post blinds and set first player to move
-        if self.player_cnt == 2 {
-            self.table.players[0].stack -= self.blind_value;
-            self.table.players[0].total_bet += self.blind_value;
-            self.table.players[1].stack -= self.blind_value / 2;
-            self.table.players[1].total_bet += self.blind_value / 2;
-            self.table.player_to_move = 1;
-        } else {
-            self.table.players[0].stack -= self.blind_value / 2;
-            self.table.players[0].total_bet += self.blind_value / 2;
-            self.table.players[1].stack -= self.blind_value;
-            self.table.players[1].total_bet += self.blind_value;
-            self.table.player_to_move = 0;
-        }
-
-        return self.process_play();
     }
 }

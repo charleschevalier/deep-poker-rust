@@ -1,10 +1,13 @@
+#[derive(Clone)]
 pub enum ActionType {
+    None,
     Fold,
     Call,
     Raise,
     AllIn,
 }
 
+#[derive(Clone)]
 pub struct Action {
     pub action_type: ActionType,
     pub raise_index: i8,
@@ -20,15 +23,19 @@ impl Action {
 }
 
 pub struct ActionConfig {
-    pub length: usize,
+    pub commited_to_pot_percentage: u8,
+    pub buy_in: u32,
+    pub big_blind: u32,
     pub preflop_raise_sizes: Vec<f32>,
     pub postflop_raise_sizes: Vec<f32>,
 }
 
 impl ActionConfig {
-    pub fn new() -> ActionConfig {
+    pub fn new(buy_in: u32, big_blind: u32) -> ActionConfig {
         ActionConfig {
-            length: 0,
+            commited_to_pot_percentage: 15,
+            buy_in: buy_in,
+            big_blind: big_blind,
             preflop_raise_sizes: Vec::new(),
             postflop_raise_sizes: Vec::new(),
         }
