@@ -2,8 +2,8 @@ use rand::Rng;
 
 use crate::model::fake_model::FakeModel;
 
-use super::action::{self, ActionConfig};
-use super::action_state::{self, ActionState};
+use super::action::ActionConfig;
+use super::action_state::ActionState;
 use super::state::{State, StateType};
 use super::state_chance::StateChance;
 use super::state_data::StateData;
