@@ -1,4 +1,4 @@
-use super::super::action::ActionConfig;
+use super::action::ActionConfig;
 use super::state::{State, StateType};
 use super::state_data::StateData;
 use super::state_play::StatePlay;

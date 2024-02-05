@@ -1,4 +1,4 @@
-use super::super::action::{Action, ActionConfig, ActionType};
+use super::action::{Action, ActionConfig, ActionType};
 use super::state::{State, StateType};
 use super::state_chance::StateChance;
 use super::state_data::StateData;

@@ -1,16 +1,10 @@
 use rand::Rng;
 
-use self::state::{State, StateType};
-use self::state_chance::StateChance;
-use self::state_data::StateData;
+use super::state::{State, StateType};
+use super::state_chance::StateChance;
+use super::state_data::StateData;
 
 use super::action::ActionConfig;
-
-mod state;
-mod state_chance;
-mod state_data;
-mod state_play;
-mod state_terminal;
 
 pub struct Tree<'a> {
     player_cnt: u32,
@@ -47,24 +41,20 @@ impl<'a> Tree<'a> {
     fn traverse_state(traverser: u32, state: &mut Box<dyn State<'a> + 'a>) -> () {
         if matches!(state.get_type(), StateType::Terminal) {
             // Return reward here
-            println!("Reward: {}", state.get_reward(traverser));
             return;
         } else if !state.is_player_in_hand(traverser) {
-            println!("Reached fold node");
             // Return the negative of his bet
         } else if matches!(state.get_type(), StateType::Chance) {
             // Create children
             state.create_children();
 
             // Traverse first child
-            println!("Traverse chance node");
             Tree::traverse_state(traverser, state.get_child(0));
         } else if state.is_player_turn(traverser as i32) {
             // Traverse all children
             state.create_children();
 
             for i in 0..state.get_child_count() {
-                println!("Traverse play node");
                 Tree::traverse_state(traverser, state.get_child(i));
             }
         } else {
@@ -74,10 +64,6 @@ impl<'a> Tree<'a> {
             state.create_children();
             let mut rng = rand::thread_rng();
             let index: usize = rng.gen_range(0..state.get_child_count());
-            println!(
-                "Traverse random node, node count: {}",
-                state.get_child_count()
-            );
             Tree::traverse_state(traverser, state.get_child(index));
         }
     }

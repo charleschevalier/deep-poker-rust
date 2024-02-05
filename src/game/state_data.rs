@@ -1,4 +1,4 @@
-use super::super::action::{Action, ActionType};
+use super::action::{Action, ActionType};
 use poker::Card;
 
 pub struct StateData {

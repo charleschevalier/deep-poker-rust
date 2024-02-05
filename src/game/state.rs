@@ -1,6 +1,6 @@
 use crate::game::action::ActionType;
 
-use super::super::action::Action;
+use super::action::Action;
 use super::state_data::StateData;
 
 pub enum StateType {
