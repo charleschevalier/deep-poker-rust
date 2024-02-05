@@ -1,5 +1,5 @@
 use super::super::action::ActionConfig;
-use super::state::State;
+use super::state::{State, StateType};
 use super::state_data::StateData;
 use super::state_play::StatePlay;
 use super::state_terminal::StateTerminal;
@@ -11,6 +11,18 @@ pub struct StateChance<'a> {
 }
 
 impl<'a> State<'a> for StateChance<'a> {
+    fn get_type(&self) -> StateType {
+        return StateType::Chance;
+    }
+
+    fn get_child(&mut self, index: usize) -> &mut Box<dyn State<'a> + 'a> {
+        return &mut self.children[index];
+    }
+
+    fn get_child_count(&self) -> usize {
+        return self.children.len();
+    }
+
     // Overrides
     fn get_state_data(&self) -> &StateData {
         return &self.state_data;
@@ -35,6 +47,21 @@ impl<'a> State<'a> for StateChance<'a> {
                 new_state_data.player_to_move = 2;
                 new_state_data.last_player = 1;
             }
+
+            // Post blinds
+            let sb = self.action_config.big_blind / 2;
+            let bb = self.action_config.big_blind;
+            if self.state_data.player_count == 2 {
+                new_state_data.bets[1] = sb;
+                new_state_data.bets[0] = bb;
+                new_state_data.stacks[1] -= sb;
+                new_state_data.stacks[0] -= bb;
+            } else {
+                new_state_data.bets[0] = sb;
+                new_state_data.bets[1] = bb;
+                new_state_data.stacks[0] -= sb;
+                new_state_data.stacks[1] -= bb;
+            }
         } else {
             // Postflop, first to act is the first active player, last to act is the last active player
             for i in 0..self.state_data.player_count {
@@ -50,38 +77,40 @@ impl<'a> State<'a> for StateChance<'a> {
         }
 
         if self.get_number_of_players_that_need_to_act() >= 2 && new_state_data.street <= 4 {
-            let new_state = Box::new(StatePlay {
-                action_config: self.action_config,
-                state_data: new_state_data,
-                children: Vec::new(),
-                action_count: 0,
-                valid_actions: Vec::new(),
-            });
-            self.children.push(new_state);
+            self.children
+                .push(Box::new(StatePlay::new(self.action_config, new_state_data)));
         } else {
             if self.get_number_of_players_that_need_to_act() == 1 {
+                self.print_actions();
                 panic!("We just dealt new cards but only 1 player has any actions left");
             } else if self.get_number_of_all_in_players() < 2 {
+                self.print_actions();
                 panic!("No players left to act but we dont have 2 players all-in");
             }
 
             if new_state_data.street <= 4 {
-                let new_state = Box::new(StateChance {
-                    action_config: self.action_config,
-                    state_data: new_state_data,
-                    children: Vec::new(),
-                });
-                self.children.push(new_state);
+                self.children.push(Box::new(StateChance::new(
+                    self.action_config,
+                    new_state_data,
+                )));
             } else {
-                let new_state = Box::new(StateTerminal {
-                    state_data: new_state_data,
-                });
-                self.children.push(new_state);
+                self.children
+                    .push(Box::new(StateTerminal::new(new_state_data)));
             }
         }
     }
 
-    fn get_reward(&self, _traverser: u32) -> f32 {
+    fn get_reward(&mut self, _traverser: u32) -> f32 {
         panic!("Not implemented");
+    }
+}
+
+impl<'a> StateChance<'a> {
+    pub fn new(action_config: &'a ActionConfig, state_data: StateData) -> StateChance {
+        StateChance {
+            action_config: action_config,
+            state_data: state_data,
+            children: Vec::new(),
+        }
     }
 }

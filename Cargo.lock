@@ -13,6 +13,7 @@ name = "deep-poker"
 version = "0.1.0"
 dependencies = [
  "poker",
+ "rand",
 ]
 
 [[package]]

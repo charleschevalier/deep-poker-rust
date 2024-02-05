@@ -1,5 +1,5 @@
 use super::super::action::{Action, ActionConfig, ActionType};
-use super::state::State;
+use super::state::{State, StateType};
 use super::state_chance::StateChance;
 use super::state_data::StateData;
 use super::state_terminal::StateTerminal;
@@ -13,12 +13,24 @@ pub struct StatePlay<'a> {
 }
 
 impl<'a> State<'a> for StatePlay<'a> {
+    fn get_type(&self) -> StateType {
+        return StateType::Play;
+    }
+
+    fn get_child(&mut self, index: usize) -> &mut Box<dyn State<'a> + 'a> {
+        return &mut self.children[index];
+    }
+
+    fn get_child_count(&self) -> usize {
+        return self.children.len();
+    }
+
     // Overrides
     fn get_state_data(&self) -> &StateData {
         return &self.state_data;
     }
 
-    fn get_reward(&self, _traverser: u32) -> f32 {
+    fn get_reward(&mut self, _traverser: u32) -> f32 {
         panic!("Not implemented");
     }
 
@@ -27,11 +39,36 @@ impl<'a> State<'a> for StatePlay<'a> {
             return;
         }
 
-        // TODO
+        let mut pot: u32 = 0;
+        let mut biggest_bet: u32 = 0;
+        for j in 0..self.state_data.player_count {
+            pot += self.state_data.bets[j as usize];
+            if self.state_data.bets[j as usize] > biggest_bet {
+                biggest_bet = self.state_data.bets[j as usize];
+            }
+        }
+
+        self.handle_fold(biggest_bet);
+        self.handle_call(biggest_bet);
+
+        if self.state_data.is_betting_open {
+            self.handle_raises(pot, biggest_bet);
+            self.handle_all_in();
+        }
     }
 }
 
 impl<'a> StatePlay<'a> {
+    pub fn new(action_config: &'a ActionConfig, state_data: StateData) -> StatePlay {
+        StatePlay {
+            action_config: action_config,
+            state_data: state_data,
+            children: Vec::new(),
+            action_count: 0,
+            valid_actions: Vec::new(),
+        }
+    }
+
     fn get_valid_actions_count(&mut self) -> i32 {
         if self.action_count == 0 {
             self.action_count = self.get_valid_actions().len() as i32;
@@ -42,6 +79,7 @@ impl<'a> StatePlay<'a> {
     fn get_valid_actions(&mut self) -> &Vec<Action> {
         if self.valid_actions.is_empty() {
             if self.state_data.players_in_hand < 2 {
+                self.print_actions();
                 panic!("Not enough players in hand");
             }
 
@@ -59,6 +97,8 @@ impl<'a> StatePlay<'a> {
                 self.valid_actions.push(Action {
                     action_type: ActionType::Fold,
                     raise_index: -1,
+                    player_index: self.get_player_to_move(),
+                    street: self.state_data.street,
                 });
             }
 
@@ -67,6 +107,8 @@ impl<'a> StatePlay<'a> {
                 self.valid_actions.push(Action {
                     action_type: ActionType::Call,
                     raise_index: -1,
+                    player_index: self.get_player_to_move(),
+                    street: self.state_data.street,
                 });
             }
 
@@ -113,6 +155,8 @@ impl<'a> StatePlay<'a> {
                     self.valid_actions.push(Action {
                         action_type: ActionType::Raise,
                         raise_index: i as i8,
+                        player_index: self.get_player_to_move(),
+                        street: self.state_data.street,
                     });
                 }
 
@@ -121,6 +165,8 @@ impl<'a> StatePlay<'a> {
                     self.valid_actions.push(Action {
                         action_type: ActionType::AllIn,
                         raise_index: -1,
+                        player_index: self.get_player_to_move(),
+                        street: self.state_data.street,
                     });
                 }
             }
@@ -150,6 +196,8 @@ impl<'a> StatePlay<'a> {
             let new_action = Action {
                 action_type: ActionType::Fold,
                 raise_index: -1,
+                player_index: self.get_player_to_move(),
+                street: new_state_data.street,
             };
             new_state_data.history.push(new_action.clone());
             new_state_data.last_actions[self.get_player_to_move() as usize] = new_action.clone();
@@ -157,33 +205,21 @@ impl<'a> StatePlay<'a> {
 
             // check if there is any player that has to play..
             if self.get_active_players(&new_state_data.is_player_in) == 1 {
-                let new_state = StateTerminal {
-                    state_data: new_state_data,
-                };
-                self.children.push(Box::new(new_state));
+                self.children
+                    .push(Box::new(StateTerminal::new(new_state_data)));
             } else if new_state_data.player_to_move != -1 {
-                let new_state = StatePlay {
-                    action_config: self.action_config,
-                    state_data: new_state_data,
-                    children: Vec::new(),
-                    action_count: 0,
-                    valid_actions: Vec::new(),
-                };
-                self.children.push(Box::new(new_state));
+                self.children
+                    .push(Box::new(StatePlay::new(self.action_config, new_state_data)));
             } else {
                 // Here the betting round is over, there is more than 1 player left
                 if new_state_data.street != 4 {
-                    let new_state = StateChance {
-                        action_config: self.action_config,
-                        state_data: new_state_data,
-                        children: Vec::new(),
-                    };
-                    self.children.push(Box::new(new_state));
+                    self.children.push(Box::new(StateChance::new(
+                        self.action_config,
+                        new_state_data,
+                    )));
                 } else {
-                    let new_state = StateTerminal {
-                        state_data: new_state_data,
-                    };
-                    self.children.push(Box::new(new_state));
+                    self.children
+                        .push(Box::new(StateTerminal::new(new_state_data)));
                 }
             }
         }
@@ -199,6 +235,8 @@ impl<'a> StatePlay<'a> {
             let new_action = Action {
                 action_type: ActionType::Call,
                 raise_index: -1,
+                player_index: self.get_player_to_move(),
+                street: new_state_data.street,
             };
             new_state_data.history.push(new_action.clone());
             new_state_data.last_actions[self.get_player_to_move() as usize] = new_action.clone();
@@ -206,27 +244,17 @@ impl<'a> StatePlay<'a> {
 
             // check if there is any player that has to play..
             if new_state_data.player_to_move != -1 {
-                let new_state = StatePlay {
-                    action_config: self.action_config,
-                    state_data: new_state_data,
-                    children: Vec::new(),
-                    action_count: 0,
-                    valid_actions: Vec::new(),
-                };
-                self.children.push(Box::new(new_state));
+                self.children
+                    .push(Box::new(StatePlay::new(self.action_config, new_state_data)));
             } else {
                 if new_state_data.street != 4 {
-                    let new_state = StateChance {
-                        action_config: self.action_config,
-                        state_data: new_state_data,
-                        children: Vec::new(),
-                    };
-                    self.children.push(Box::new(new_state));
+                    self.children.push(Box::new(StateChance::new(
+                        self.action_config,
+                        new_state_data,
+                    )));
                 } else {
-                    let new_state = StateTerminal {
-                        state_data: new_state_data,
-                    };
-                    self.children.push(Box::new(new_state));
+                    self.children
+                        .push(Box::new(StateTerminal::new(new_state_data)));
                 }
             }
         }
@@ -252,7 +280,7 @@ impl<'a> StatePlay<'a> {
             actual_bet = to_call + raise;
         }
 
-        let stack_left = self.get_to_move_stack() - actual_bet;
+        let stack_left: i32 = self.get_to_move_stack() as i32 - actual_bet as i32;
 
         if raise < self.state_data.min_raise
             || actual_bet >= self.get_to_move_stack()
@@ -271,6 +299,8 @@ impl<'a> StatePlay<'a> {
         let new_action = Action {
             action_type: ActionType::Raise,
             raise_index: action_index as i8,
+            player_index: self.get_player_to_move(),
+            street: new_state_data.street,
         };
         new_state_data.history.push(new_action.clone());
         new_state_data.last_actions[self.get_player_to_move() as usize] = new_action.clone();
@@ -279,15 +309,10 @@ impl<'a> StatePlay<'a> {
         new_state_data.player_to_move = self.get_next_player(new_state_data.last_player);
 
         if new_state_data.player_to_move != -1 {
-            let new_state = StatePlay {
-                action_config: self.action_config,
-                state_data: new_state_data,
-                children: Vec::new(),
-                action_count: 0,
-                valid_actions: Vec::new(),
-            };
-            self.children.push(Box::new(new_state));
+            self.children
+                .push(Box::new(StatePlay::new(self.action_config, new_state_data)));
         } else {
+            self.print_actions();
             panic!("Someone raised but there is noone left to play next");
         }
     }
@@ -300,6 +325,8 @@ impl<'a> StatePlay<'a> {
             let new_action = Action {
                 action_type: ActionType::AllIn,
                 raise_index: -1,
+                player_index: self.get_player_to_move(),
+                street: new_state_data.street,
             };
             new_state_data.history.push(new_action.clone());
             new_state_data.last_actions[self.get_player_to_move() as usize] = new_action.clone();
@@ -311,30 +338,19 @@ impl<'a> StatePlay<'a> {
             if new_state_data.player_to_move != -1 {
                 new_state_data.is_betting_open = false;
 
-                let new_state = StatePlay {
-                    action_config: self.action_config,
-                    state_data: new_state_data,
-                    children: Vec::new(),
-                    action_count: 0,
-                    valid_actions: Vec::new(),
-                };
-
-                self.children.push(Box::new(new_state));
+                self.children
+                    .push(Box::new(StatePlay::new(self.action_config, new_state_data)));
             } else {
                 if self.state_data.street != 4 {
                     // New street
-                    let new_state = StateChance {
-                        action_config: self.action_config,
-                        state_data: new_state_data,
-                        children: Vec::new(),
-                    };
-                    self.children.push(Box::new(new_state));
+                    self.children.push(Box::new(StateChance::new(
+                        self.action_config,
+                        new_state_data,
+                    )));
                 } else {
                     // Showdown
-                    let new_state = StateTerminal {
-                        state_data: new_state_data,
-                    };
-                    self.children.push(Box::new(new_state));
+                    self.children
+                        .push(Box::new(StateTerminal::new(new_state_data)));
                 }
             }
         }

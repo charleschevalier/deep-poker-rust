@@ -1,4 +1,4 @@
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ActionType {
     None,
     Fold,
@@ -7,19 +7,12 @@ pub enum ActionType {
     AllIn,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Action {
     pub action_type: ActionType,
     pub raise_index: i8,
-}
-
-impl Action {
-    pub fn new(action_type: ActionType, raise_index: i8) -> Action {
-        Action {
-            action_type,
-            raise_index,
-        }
-    }
+    pub player_index: i32,
+    pub street: u8,
 }
 
 pub struct ActionConfig {

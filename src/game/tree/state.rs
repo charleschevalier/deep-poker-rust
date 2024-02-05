@@ -3,6 +3,12 @@ use crate::game::action::ActionType;
 use super::super::action::Action;
 use super::state_data::StateData;
 
+pub enum StateType {
+    Play,
+    Terminal,
+    Chance,
+}
+
 pub trait State<'a> {
     // Ugly getters, needed for polymorphism
     fn get_state_data(&self) -> &StateData;
@@ -42,12 +48,12 @@ pub trait State<'a> {
 
     fn get_last_player(&self, player_that_raised: i32) -> i32 {
         let mut last: i32 = -1;
-        for i in (player_that_raised + 1) % self.get_player_count() as i32
-            ..(player_that_raised) % self.get_player_count() as i32
-        {
+        let mut i = (player_that_raised + 1) % self.get_player_count() as i32;
+        while i != player_that_raised {
             if self.is_player_in(i as u32) {
-                last = i as i32;
+                last = i;
             }
+            i = (i + 1) % self.get_player_count() as i32;
         }
         return last;
     }
@@ -99,7 +105,17 @@ pub trait State<'a> {
         return self.get_player_to_move() == player_index;
     }
 
+    fn print_actions(&self) -> () {
+        println!("---------------------------------");
+        for h in self.get_state_data().history.iter() {
+            println!("{:?}", h);
+        }
+    }
+
     // Functions that need to be implemented by the state
     fn create_children(&mut self) -> ();
-    fn get_reward(&self, traverser: u32) -> f32;
+    fn get_reward(&mut self, traverser: u32) -> f32;
+    fn get_type(&self) -> StateType;
+    fn get_child(&mut self, index: usize) -> &mut Box<dyn State<'a> + 'a>;
+    fn get_child_count(&self) -> usize;
 }

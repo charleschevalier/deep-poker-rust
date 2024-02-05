@@ -1,17 +1,10 @@
 use super::super::action::{Action, ActionType};
 use poker::Card;
 
-#[derive(Clone)]
-pub enum StateType {
-    Play,
-    Terminal,
-    Chance,
-}
 pub struct StateData {
     pub player_count: u32,
     pub board: Vec<Card>,
     pub hands: Vec<Vec<Card>>,
-    pub state_type: StateType,
     pub stacks: Vec<u32>,
     pub bets: Vec<u32>,
     pub player_to_move: i32,
@@ -31,10 +24,12 @@ impl StateData {
     pub fn new(player_count: u32, stack_size: u32) -> StateData {
         // Create last actions
         let mut last_actions = Vec::new();
-        for _ in 0..player_count {
+        for i in 0..player_count {
             last_actions.push(Action {
                 action_type: ActionType::None,
                 raise_index: -1,
+                player_index: i as i32,
+                street: 0,
             });
         }
 
@@ -42,7 +37,7 @@ impl StateData {
         let mut deck = Card::generate_shuffled_deck();
         let board = deck.drain(..5).collect();
         let mut hands = Vec::new();
-        for i in 0..player_count {
+        for _ in 0..player_count {
             hands.push(deck.drain(..2).collect());
         }
 
@@ -50,7 +45,6 @@ impl StateData {
             player_count: player_count,
             board: board,
             hands: hands,
-            state_type: StateType::Chance,
             stacks: vec![stack_size; player_count as usize],
             bets: vec![0; player_count as usize],
             player_to_move: -1,
@@ -74,7 +68,6 @@ impl Clone for StateData {
             player_count: self.player_count,
             board: self.board.clone(),
             hands: self.hands.clone(),
-            state_type: self.state_type.clone(),
             stacks: self.stacks.clone(),
             bets: self.bets.clone(),
             player_to_move: self.player_to_move,

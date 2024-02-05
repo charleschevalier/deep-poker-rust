@@ -1,12 +1,27 @@
-use super::state::State;
+use std::vec;
+
+use super::state::{State, StateType};
 use super::state_data::StateData;
 use poker::{Eval, Evaluator};
 
 pub struct StateTerminal {
     pub state_data: StateData,
+    rewards_generated: bool,
 }
 
 impl<'a> State<'a> for StateTerminal {
+    fn get_type(&self) -> StateType {
+        return StateType::Terminal;
+    }
+
+    fn get_child(&mut self, _index: usize) -> &mut Box<dyn State<'a> + 'a> {
+        panic!("Not implemented");
+    }
+
+    fn get_child_count(&self) -> usize {
+        panic!("Not implemented");
+    }
+
     // Overrides
     fn get_state_data(&self) -> &StateData {
         return &self.state_data;
@@ -16,12 +31,23 @@ impl<'a> State<'a> for StateTerminal {
         panic!("Not implemented");
     }
 
-    fn get_reward(&self, _traverser: u32) -> f32 {
-        panic!("Not implemented");
+    fn get_reward(&mut self, _traverser: u32) -> f32 {
+        if !self.rewards_generated {
+            self.create_rewards();
+            self.rewards_generated = true;
+        }
+
+        return self.state_data.rewards[_traverser as usize];
     }
 }
 
 impl<'a> StateTerminal {
+    pub fn new(state_data: StateData) -> StateTerminal {
+        StateTerminal {
+            state_data: state_data,
+            rewards_generated: false,
+        }
+    }
     fn create_rewards(&mut self) -> &Vec<f32> {
         self.state_data
             .rewards
@@ -57,12 +83,11 @@ impl<'a> StateTerminal {
             let eval = Evaluator::new();
 
             // Evaluate hands
-            let mut evals: Vec<Eval> = Vec::new();
+            let mut evals: Vec<Eval> = vec![Eval::WORST; self.state_data.player_count as usize];
             for i in 0..self.state_data.player_count {
                 if self.is_player_in(i) {
                     let mut hand = self.state_data.hands[i as usize].clone();
-                    hand.append(&mut self.state_data.board);
-
+                    hand.append(&mut self.state_data.board.clone());
                     evals[i as usize] = eval.evaluate(hand).expect("Couldn't evaluate hand!");
                 }
             }
