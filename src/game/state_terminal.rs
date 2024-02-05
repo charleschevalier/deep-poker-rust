@@ -1,5 +1,6 @@
 use std::vec;
 
+use super::action::Action;
 use super::state::{State, StateType};
 use super::state_data::StateData;
 use poker::{Eval, Evaluator};
@@ -22,13 +23,21 @@ impl<'a> State<'a> for StateTerminal {
         panic!("Not implemented");
     }
 
+    fn create_children(&mut self) -> () {
+        panic!("Not implemented");
+    }
+
+    fn get_valid_actions_count(&mut self) -> i32 {
+        panic!("Not implemented");
+    }
+
+    fn get_valid_actions(&mut self) -> &Vec<Action> {
+        panic!("Not implemented");
+    }
+
     // Overrides
     fn get_state_data(&self) -> &StateData {
         return &self.state_data;
-    }
-
-    fn create_children(&mut self) -> () {
-        panic!("Not implemented");
     }
 
     fn get_reward(&mut self, _traverser: u32) -> f32 {

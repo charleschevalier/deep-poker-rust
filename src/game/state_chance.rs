@@ -1,3 +1,4 @@
+use super::action::Action;
 use super::action::ActionConfig;
 use super::state::{State, StateType};
 use super::state_data::StateData;
@@ -21,6 +22,18 @@ impl<'a> State<'a> for StateChance<'a> {
 
     fn get_child_count(&self) -> usize {
         return self.children.len();
+    }
+
+    fn get_reward(&mut self, _traverser: u32) -> f32 {
+        panic!("Not implemented");
+    }
+
+    fn get_valid_actions_count(&mut self) -> i32 {
+        panic!("Not implemented");
+    }
+
+    fn get_valid_actions(&mut self) -> &Vec<Action> {
+        panic!("Not implemented");
     }
 
     // Overrides
@@ -98,10 +111,6 @@ impl<'a> State<'a> for StateChance<'a> {
                     .push(Box::new(StateTerminal::new(new_state_data)));
             }
         }
-    }
-
-    fn get_reward(&mut self, _traverser: u32) -> f32 {
-        panic!("Not implemented");
     }
 }
 

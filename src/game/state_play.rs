@@ -56,18 +56,6 @@ impl<'a> State<'a> for StatePlay<'a> {
             self.handle_all_in();
         }
     }
-}
-
-impl<'a> StatePlay<'a> {
-    pub fn new(action_config: &'a ActionConfig, state_data: StateData) -> StatePlay {
-        StatePlay {
-            action_config: action_config,
-            state_data: state_data,
-            children: Vec::new(),
-            action_count: 0,
-            valid_actions: Vec::new(),
-        }
-    }
 
     fn get_valid_actions_count(&mut self) -> i32 {
         if self.action_count == 0 {
@@ -137,7 +125,7 @@ impl<'a> StatePlay<'a> {
                         actual_bet = to_call + raise;
                     }
 
-                    let stack_left = self.get_to_move_stack() - actual_bet;
+                    let stack_left: i32 = self.get_to_move_stack() as i32 - actual_bet as i32;
 
                     // Do not add raises below the minimum raise or raises that would put the player all in
                     // Or raises that would leave us with less than commited_to_pot_percentage% of our stack
@@ -172,6 +160,18 @@ impl<'a> StatePlay<'a> {
             }
         }
         return &self.valid_actions;
+    }
+}
+
+impl<'a> StatePlay<'a> {
+    pub fn new(action_config: &'a ActionConfig, state_data: StateData) -> StatePlay {
+        StatePlay {
+            action_config: action_config,
+            state_data: state_data,
+            children: Vec::new(),
+            action_count: 0,
+            valid_actions: Vec::new(),
+        }
     }
 
     fn handle_raises(&mut self, pot: u32, biggest_bet: u32) -> () {
