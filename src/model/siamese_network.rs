@@ -62,14 +62,14 @@ impl SiameseNetwork {
     }
 
     pub fn forward(&self, card_tensor: &Tensor, action_tensor: &Tensor) -> Tensor {
-        let card_output = self.card_conv.forward(&card_tensor).unwrap();
+        let card_output = self.card_conv.forward(card_tensor).unwrap();
 
         // Print card_output dims
         for dim in card_output.shape().dims() {
             println!("Card output dim: {}", dim);
         }
 
-        let action_output = self.action_conv.forward(&action_tensor).unwrap();
+        let action_output = self.action_conv.forward(action_tensor).unwrap();
 
         // Print action_output dims
         for dim in action_output.shape().dims() {
@@ -100,10 +100,10 @@ impl SiameseNetwork {
             println!("Res dim: {}", dim);
         }
 
-        return res;
+        res
     }
 
     fn calc_cnn_size(input_size: usize, kernel_size: usize, stride: usize) -> usize {
-        return (input_size - kernel_size) / stride + 1;
+        (input_size - kernel_size) / stride + 1
     }
 }

@@ -12,7 +12,7 @@ pub struct StateTerminal {
 
 impl<'a> State<'a> for StateTerminal {
     fn get_type(&self) -> StateType {
-        return StateType::Terminal;
+        StateType::Terminal
     }
 
     fn get_child(&mut self, _index: usize) -> &mut Box<dyn State<'a> + 'a> {
@@ -23,7 +23,7 @@ impl<'a> State<'a> for StateTerminal {
         panic!("Not implemented");
     }
 
-    fn create_children(&mut self) -> () {
+    fn create_children(&mut self) {
         panic!("Not implemented");
     }
 
@@ -37,7 +37,7 @@ impl<'a> State<'a> for StateTerminal {
 
     // Overrides
     fn get_state_data(&self) -> &StateData {
-        return &self.state_data;
+        &self.state_data
     }
 
     fn get_reward(&mut self, _traverser: u32) -> f32 {
@@ -46,14 +46,14 @@ impl<'a> State<'a> for StateTerminal {
             self.rewards_generated = true;
         }
 
-        return self.state_data.rewards[_traverser as usize];
+        self.state_data.rewards[_traverser as usize]
     }
 }
 
-impl<'a> StateTerminal {
+impl StateTerminal {
     pub fn new(state_data: StateData) -> StateTerminal {
         StateTerminal {
-            state_data: state_data,
+            state_data,
             rewards_generated: false,
         }
     }
@@ -104,20 +104,16 @@ impl<'a> StateTerminal {
             // Get best hand
             let mut best_hand = evals[0];
             for i in 1..self.state_data.player_count {
-                if self.is_player_in(i) {
-                    if evals[i as usize].is_better_than(best_hand) {
-                        best_hand = evals[i as usize];
-                    }
+                if self.is_player_in(i) && evals[i as usize].is_better_than(best_hand) {
+                    best_hand = evals[i as usize];
                 }
             }
 
             // Get players with the best hand (there could be a draw)
             let mut indices_with_best_hand: Vec<u32> = Vec::new();
             for i in 0..self.state_data.player_count {
-                if self.is_player_in(i) {
-                    if evals[i as usize].is_equal_to(best_hand) {
-                        indices_with_best_hand.push(i);
-                    }
+                if self.is_player_in(i) && evals[i as usize].is_equal_to(best_hand) {
+                    indices_with_best_hand.push(i);
                 }
             }
 
@@ -128,6 +124,6 @@ impl<'a> StateTerminal {
             }
         }
 
-        return &self.state_data.rewards;
+        &self.state_data.rewards
     }
 }

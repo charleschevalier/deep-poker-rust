@@ -13,15 +13,15 @@ pub struct StateChance<'a> {
 
 impl<'a> State<'a> for StateChance<'a> {
     fn get_type(&self) -> StateType {
-        return StateType::Chance;
+        StateType::Chance
     }
 
     fn get_child(&mut self, index: usize) -> &mut Box<dyn State<'a> + 'a> {
-        return &mut self.children[index];
+        &mut self.children[index]
     }
 
     fn get_child_count(&self) -> usize {
-        return self.children.len();
+        self.children.len()
     }
 
     fn get_reward(&mut self, _traverser: u32) -> f32 {
@@ -38,10 +38,10 @@ impl<'a> State<'a> for StateChance<'a> {
 
     // Overrides
     fn get_state_data(&self) -> &StateData {
-        return &self.state_data;
+        &self.state_data
     }
 
-    fn create_children(&mut self) -> () {
+    fn create_children(&mut self) {
         self.children = Vec::new();
 
         let mut new_state_data = self.state_data.clone();
@@ -117,8 +117,8 @@ impl<'a> State<'a> for StateChance<'a> {
 impl<'a> StateChance<'a> {
     pub fn new(action_config: &'a ActionConfig, state_data: StateData) -> StateChance {
         StateChance {
-            action_config: action_config,
-            state_data: state_data,
+            action_config,
+            state_data,
             children: Vec::new(),
         }
     }

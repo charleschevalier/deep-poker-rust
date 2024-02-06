@@ -38,12 +38,12 @@ pub trait State<'a> {
         let last_to_move_temp = (last_to_move_temp + 1) % self.get_player_count() as i32;
         while i != last_to_move_temp {
             if self.is_player_in(i as u32) {
-                return i as i32;
+                return i;
             }
             i = (i + 1) % self.get_player_count() as i32;
         }
 
-        return -1;
+        -1
     }
 
     fn get_last_player(&self, player_that_raised: i32) -> i32 {
@@ -55,7 +55,7 @@ pub trait State<'a> {
             }
             i = (i + 1) % self.get_player_count() as i32;
         }
-        return last;
+        last
     }
 
     fn get_number_of_players_that_need_to_act(&self) -> u32 {
@@ -71,17 +71,17 @@ pub trait State<'a> {
                 count += 1;
             }
         }
-        return count;
+        count
     }
 
-    fn get_active_players(&self, new_is_player_in: &Vec<bool>) -> u32 {
+    fn get_active_players(&self, new_is_player_in: &[bool]) -> u32 {
         let mut count = 0;
         for i in 0..self.get_player_count() {
             if new_is_player_in[i as usize] {
                 count += 1;
             }
         }
-        return count;
+        count
     }
 
     fn get_number_of_all_in_players(&self) -> u32 {
@@ -94,18 +94,18 @@ pub trait State<'a> {
                 count += 1;
             }
         }
-        return count;
+        count
     }
 
     fn is_player_in_hand(&self, player_index: u32) -> bool {
-        return self.is_player_in(player_index);
+        self.is_player_in(player_index)
     }
 
     fn is_player_turn(&self, player_index: i32) -> bool {
-        return self.get_player_to_move() == player_index;
+        self.get_player_to_move() == player_index
     }
 
-    fn print_actions(&self) -> () {
+    fn print_actions(&self) {
         println!("---------------------------------");
         for h in self.get_state_data().history.iter() {
             println!("{:?}", h);
@@ -113,7 +113,7 @@ pub trait State<'a> {
     }
 
     // Functions that need to be implemented by the state
-    fn create_children(&mut self) -> ();
+    fn create_children(&mut self);
     fn get_reward(&mut self, traverser: u32) -> f32;
     fn get_type(&self) -> StateType;
     fn get_child(&mut self, index: usize) -> &mut Box<dyn State<'a> + 'a>;

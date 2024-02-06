@@ -42,9 +42,9 @@ impl StateData {
         }
 
         StateData {
-            player_count: player_count,
-            board: board,
-            hands: hands,
+            player_count,
+            board,
+            hands,
             stacks: vec![stack_size; player_count as usize],
             bets: vec![0; player_count as usize],
             player_to_move: -1,
@@ -56,7 +56,7 @@ impl StateData {
             min_raise: 0,
             is_betting_open: true,
             action_count: 0,
-            last_actions: last_actions,
+            last_actions,
             history: Vec::new(),
         }
     }

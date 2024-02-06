@@ -27,8 +27,8 @@ impl ActionConfig {
     pub fn new(buy_in: u32, big_blind: u32) -> ActionConfig {
         ActionConfig {
             commited_to_pot_percentage: 15,
-            buy_in: buy_in,
-            big_blind: big_blind,
+            buy_in,
+            big_blind,
             preflop_raise_sizes: Vec::new(),
             postflop_raise_sizes: Vec::new(),
         }

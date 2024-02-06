@@ -29,7 +29,7 @@ fn main() {
     let action_tensor = Tensor::zeros(
         (
             1,
-            max_action_per_street_cnt as usize * 4,
+            max_action_per_street_cnt * 4,
             action_abstraction_count as usize,
             player_count as usize + 2,
         ),
@@ -44,5 +44,6 @@ fn main() {
         max_action_per_street_cnt,
         &vb,
     );
+
     model.forward(&card_tensor, &action_tensor);
 }

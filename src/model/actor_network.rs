@@ -15,9 +15,9 @@ impl ActorNetwork {
     }
 
     pub fn forward(&self, x: &Tensor) -> Tensor {
-        let mut x = self.linear_1.forward(&x).unwrap();
+        let mut x = self.linear_1.forward(x).unwrap();
         x = x.relu().unwrap();
         x = self.linear_2.forward(&x).unwrap();
-        return x;
+        x
     }
 }

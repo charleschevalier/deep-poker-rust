@@ -18,8 +18,8 @@ pub struct Tree<'a> {
 impl<'a> Tree<'a> {
     pub fn new(player_cnt: u32, action_config: &ActionConfig) -> Tree {
         Tree {
-            player_cnt: player_cnt,
-            action_config: action_config,
+            player_cnt,
+            action_config,
             root: Box::new(StateChance::new(
                 action_config,
                 StateData::new(player_cnt, action_config.buy_in),
@@ -28,7 +28,7 @@ impl<'a> Tree<'a> {
         }
     }
 
-    fn reset(&mut self) -> () {
+    fn reset(&mut self) {
         // Shuffle the deck
         self.root = Box::new(StateChance::new(
             self.action_config,
@@ -36,7 +36,7 @@ impl<'a> Tree<'a> {
         ));
     }
 
-    pub fn traverse(&mut self, traverser: u32) -> () {
+    pub fn traverse(&mut self, traverser: u32) {
         self.reset();
         Tree::traverse_state(traverser, &mut self.root, &mut self.action_states);
         println!("Action states length: {}", self.action_states.len());
@@ -49,7 +49,7 @@ impl<'a> Tree<'a> {
     ) -> f32 {
         if matches!(state.get_type(), StateType::Terminal) {
             // Return reward here
-            return state.get_reward(traverser);
+            state.get_reward(traverser)
         } else if !state.is_player_in_hand(traverser) {
             // Return the negative of his bet
             return -(state.get_state_data().bets[traverser as usize] as f32);
@@ -69,13 +69,12 @@ impl<'a> Tree<'a> {
                 hand: state.get_state_data().hands[traverser as usize].clone(),
                 board: state.get_state_data().board.clone(),
                 player_to_move: traverser,
-                rewards: vec![0.0; state.get_child_count() as usize],
+                rewards: vec![0.0; state.get_child_count()],
                 valid_actions: state.get_valid_actions().clone(),
             };
             let probs = FakeModel::get_probabilities(state.get_child_count() as u32);
-            for i in 0..state.get_child_count() {
-                reward +=
-                    probs[i] * Tree::traverse_state(traverser, state.get_child(i), action_states);
+            for (i, prob) in probs.iter().enumerate() {
+                reward += prob * Tree::traverse_state(traverser, state.get_child(i), action_states);
                 action_state.rewards[i] = reward;
             }
 

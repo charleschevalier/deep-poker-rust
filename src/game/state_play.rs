@@ -14,27 +14,27 @@ pub struct StatePlay<'a> {
 
 impl<'a> State<'a> for StatePlay<'a> {
     fn get_type(&self) -> StateType {
-        return StateType::Play;
+        StateType::Play
     }
 
     fn get_child(&mut self, index: usize) -> &mut Box<dyn State<'a> + 'a> {
-        return &mut self.children[index];
+        &mut self.children[index]
     }
 
     fn get_child_count(&self) -> usize {
-        return self.children.len();
+        self.children.len()
     }
 
     // Overrides
     fn get_state_data(&self) -> &StateData {
-        return &self.state_data;
+        &self.state_data
     }
 
     fn get_reward(&mut self, _traverser: u32) -> f32 {
         panic!("Not implemented");
     }
 
-    fn create_children(&mut self) -> () {
+    fn create_children(&mut self) {
         if !self.children.is_empty() {
             return;
         }
@@ -61,7 +61,7 @@ impl<'a> State<'a> for StatePlay<'a> {
         if self.action_count == 0 {
             self.action_count = self.get_valid_actions().len() as i32;
         }
-        return self.action_count;
+        self.action_count
     }
 
     fn get_valid_actions(&mut self) -> &Vec<Action> {
@@ -102,26 +102,25 @@ impl<'a> State<'a> for StatePlay<'a> {
 
             // Handle raises & all-ins
             if self.state_data.is_betting_open {
-                let raises: Vec<f32>;
-                if self.state_data.street == 1 {
-                    raises = self.action_config.preflop_raise_sizes.clone();
+                let raises: Vec<f32> = if self.state_data.street == 1 {
+                    self.action_config.preflop_raise_sizes.clone()
                 } else {
-                    raises = self.action_config.postflop_raise_sizes.clone();
-                }
+                    self.action_config.postflop_raise_sizes.clone()
+                };
 
                 // Iterate through configured raise sizes
-                for i in 0..raises.len() {
+                for (i, raise_ratio) in raises.iter().enumerate() {
                     let to_call = biggest_bet - self.get_to_move_bet();
                     let raise;
                     let actual_bet;
 
                     // Calculate raise size in chips
                     if self.state_data.street == 1 {
-                        actual_bet = (raises[i] * biggest_bet as f32).round() as u32
+                        actual_bet = (raise_ratio * biggest_bet as f32).round() as u32
                             - self.get_to_move_bet();
-                        raise = (raises[i] * biggest_bet as f32).round() as u32 - biggest_bet;
+                        raise = (raise_ratio * biggest_bet as f32).round() as u32 - biggest_bet;
                     } else {
-                        raise = (raises[i] * pot as f32).round() as u32;
+                        raise = (raise_ratio * pot as f32).round() as u32;
                         actual_bet = to_call + raise;
                     }
 
@@ -159,36 +158,35 @@ impl<'a> State<'a> for StatePlay<'a> {
                 }
             }
         }
-        return &self.valid_actions;
+        &self.valid_actions
     }
 }
 
 impl<'a> StatePlay<'a> {
     pub fn new(action_config: &'a ActionConfig, state_data: StateData) -> StatePlay {
         StatePlay {
-            action_config: action_config,
-            state_data: state_data,
+            action_config,
+            state_data,
             children: Vec::new(),
             action_count: 0,
             valid_actions: Vec::new(),
         }
     }
 
-    fn handle_raises(&mut self, pot: u32, biggest_bet: u32) -> () {
-        let raises: Vec<f32>;
-        if self.state_data.street == 1 {
-            raises = self.action_config.preflop_raise_sizes.clone();
+    fn handle_raises(&mut self, pot: u32, biggest_bet: u32) {
+        let raises: Vec<f32> = if self.state_data.street == 1 {
+            self.action_config.preflop_raise_sizes.clone()
         } else {
-            raises = self.action_config.postflop_raise_sizes.clone();
-        }
+            self.action_config.postflop_raise_sizes.clone()
+        };
 
         // Iterate through configured raise sizes
-        for i in 0..raises.len() {
-            self.handle_raise(pot, biggest_bet, i, raises[i]);
+        for (i, raise_ratio) in raises.iter().enumerate() {
+            self.handle_raise(pot, biggest_bet, i, *raise_ratio);
         }
     }
 
-    fn handle_fold(&mut self, biggest_bet: u32) -> () {
+    fn handle_fold(&mut self, biggest_bet: u32) {
         if biggest_bet > self.get_to_move_bet() {
             let mut new_state_data = self.state_data.clone();
             new_state_data.is_player_in[self.get_player_to_move() as usize] = false;
@@ -225,7 +223,7 @@ impl<'a> StatePlay<'a> {
         }
     }
 
-    fn handle_call(&mut self, biggest_bet: u32) -> () {
+    fn handle_call(&mut self, biggest_bet: u32) {
         if biggest_bet - self.get_to_move_bet() < self.get_to_move_stack() {
             let mut new_state_data = self.state_data.clone();
             new_state_data.bets[self.get_player_to_move() as usize] +=
@@ -246,27 +244,19 @@ impl<'a> StatePlay<'a> {
             if new_state_data.player_to_move != -1 {
                 self.children
                     .push(Box::new(StatePlay::new(self.action_config, new_state_data)));
+            } else if new_state_data.street != 4 {
+                self.children.push(Box::new(StateChance::new(
+                    self.action_config,
+                    new_state_data,
+                )));
             } else {
-                if new_state_data.street != 4 {
-                    self.children.push(Box::new(StateChance::new(
-                        self.action_config,
-                        new_state_data,
-                    )));
-                } else {
-                    self.children
-                        .push(Box::new(StateTerminal::new(new_state_data)));
-                }
+                self.children
+                    .push(Box::new(StateTerminal::new(new_state_data)));
             }
         }
     }
 
-    fn handle_raise(
-        &mut self,
-        pot: u32,
-        biggest_bet: u32,
-        action_index: usize,
-        action_value: f32,
-    ) -> () {
+    fn handle_raise(&mut self, pot: u32, biggest_bet: u32, action_index: usize, action_value: f32) {
         let to_call = biggest_bet - self.get_to_move_bet();
         let raise: u32;
         let actual_bet: u32;
@@ -317,7 +307,7 @@ impl<'a> StatePlay<'a> {
         }
     }
 
-    fn handle_all_in(&mut self) -> () {
+    fn handle_all_in(&mut self) {
         if self.get_to_move_stack() > 0 {
             let mut new_state_data = self.state_data.clone();
             new_state_data.bets[self.get_player_to_move() as usize] += self.get_to_move_stack();
@@ -340,18 +330,16 @@ impl<'a> StatePlay<'a> {
 
                 self.children
                     .push(Box::new(StatePlay::new(self.action_config, new_state_data)));
+            } else if self.state_data.street != 4 {
+                // New street
+                self.children.push(Box::new(StateChance::new(
+                    self.action_config,
+                    new_state_data,
+                )));
             } else {
-                if self.state_data.street != 4 {
-                    // New street
-                    self.children.push(Box::new(StateChance::new(
-                        self.action_config,
-                        new_state_data,
-                    )));
-                } else {
-                    // Showdown
-                    self.children
-                        .push(Box::new(StateTerminal::new(new_state_data)));
-                }
+                // Showdown
+                self.children
+                    .push(Box::new(StateTerminal::new(new_state_data)));
             }
         }
     }
