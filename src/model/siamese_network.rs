@@ -6,8 +6,6 @@ pub struct SiameseNetwork {
     action_conv: Conv2d,
     merge_layer: Linear,
     output_layer: Linear,
-    card_conv_out_size: usize,
-    action_conv_out_size: usize,
 }
 
 impl SiameseNetwork {
@@ -53,20 +51,13 @@ impl SiameseNetwork {
         )
         .unwrap();
 
-        let output_layer = linear(
-            4096,
-            action_abstraction_count as usize,
-            vb.pp("output_layer"),
-        )
-        .unwrap();
+        let output_layer = linear(4096, 4096, vb.pp("output_layer")).unwrap();
 
         SiameseNetwork {
             card_conv,
             action_conv,
             merge_layer,
             output_layer,
-            card_conv_out_size,
-            action_conv_out_size,
         }
     }
 
