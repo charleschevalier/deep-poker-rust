@@ -1,6 +1,5 @@
 use std::vec;
 
-use super::action::Action;
 use super::state::{State, StateType};
 use super::state_data::StateData;
 use poker::{Eval, Evaluator};
@@ -15,7 +14,7 @@ impl<'a> State<'a> for StateTerminal {
         StateType::Terminal
     }
 
-    fn get_child(&mut self, _index: usize) -> &mut Box<dyn State<'a> + 'a> {
+    fn get_child(&mut self, _index: usize) -> &mut Option<Box<dyn State<'a> + 'a>> {
         panic!("Not implemented");
     }
 
@@ -27,11 +26,7 @@ impl<'a> State<'a> for StateTerminal {
         panic!("Not implemented");
     }
 
-    fn get_valid_actions_count(&mut self) -> i32 {
-        panic!("Not implemented");
-    }
-
-    fn get_valid_actions(&mut self) -> &Vec<Action> {
+    fn get_valid_actions_mask(&self) -> Vec<f32> {
         panic!("Not implemented");
     }
 

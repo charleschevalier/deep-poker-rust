@@ -18,6 +18,8 @@ impl ActorNetwork {
         let mut x = self.linear_1.forward(x).unwrap();
         x = x.relu().unwrap();
         x = self.linear_2.forward(&x).unwrap();
+        // TODO: check dimension here
+        x = candle_nn::ops::softmax(&x, candle_core::D::Minus1).unwrap();
         x
     }
 }

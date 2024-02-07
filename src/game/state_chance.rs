@@ -1,4 +1,3 @@
-use super::action::Action;
 use super::action::ActionConfig;
 use super::state::{State, StateType};
 use super::state_data::StateData;
@@ -8,7 +7,7 @@ use super::state_terminal::StateTerminal;
 pub struct StateChance<'a> {
     pub action_config: &'a ActionConfig,
     pub state_data: StateData,
-    pub children: Vec<Box<dyn State<'a> + 'a>>,
+    pub children: Vec<Option<Box<dyn State<'a> + 'a>>>,
 }
 
 impl<'a> State<'a> for StateChance<'a> {
@@ -16,7 +15,7 @@ impl<'a> State<'a> for StateChance<'a> {
         StateType::Chance
     }
 
-    fn get_child(&mut self, index: usize) -> &mut Box<dyn State<'a> + 'a> {
+    fn get_child(&mut self, index: usize) -> &mut Option<Box<dyn State<'a> + 'a>> {
         &mut self.children[index]
     }
 
@@ -28,11 +27,7 @@ impl<'a> State<'a> for StateChance<'a> {
         panic!("Not implemented");
     }
 
-    fn get_valid_actions_count(&mut self) -> i32 {
-        panic!("Not implemented");
-    }
-
-    fn get_valid_actions(&mut self) -> &Vec<Action> {
+    fn get_valid_actions_mask(&self) -> Vec<f32> {
         panic!("Not implemented");
     }
 
@@ -90,8 +85,10 @@ impl<'a> State<'a> for StateChance<'a> {
         }
 
         if self.get_number_of_players_that_need_to_act() >= 2 && new_state_data.street <= 4 {
-            self.children
-                .push(Box::new(StatePlay::new(self.action_config, new_state_data)));
+            self.children.push(Some(Box::new(StatePlay::new(
+                self.action_config,
+                new_state_data,
+            ))));
         } else {
             if self.get_number_of_players_that_need_to_act() == 1 {
                 self.print_actions();
@@ -102,13 +99,13 @@ impl<'a> State<'a> for StateChance<'a> {
             }
 
             if new_state_data.street <= 4 {
-                self.children.push(Box::new(StateChance::new(
+                self.children.push(Some(Box::new(StateChance::new(
                     self.action_config,
                     new_state_data,
-                )));
+                ))));
             } else {
                 self.children
-                    .push(Box::new(StateTerminal::new(new_state_data)));
+                    .push(Some(Box::new(StateTerminal::new(new_state_data))));
             }
         }
     }

@@ -1,8 +1,10 @@
+mod state;
+mod state_chance;
+mod state_data;
+mod state_play;
+mod state_terminal;
+
 pub mod action;
 pub mod action_state;
-pub mod state;
-pub mod state_chance;
-pub mod state_data;
-pub mod state_play;
-pub mod state_terminal;
+pub mod hand_state;
 pub mod tree;

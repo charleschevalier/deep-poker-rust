@@ -73,19 +73,43 @@ impl TrinalClipLoss {
     }
 }
 
-// def trinal_clip_ppo_loss(rt_theta, advantage, epsilon, delta1, delta2, delta3):
-//     # Outer clipping for both policy and value losses
-//     clipped_rt_theta = torch.clamp(rt_theta, 1 - epsilon, 1 + epsilon)
+// def calculate_discounted_rewards(rewards, gamma=0.999):
+//     discounted_rewards = []
+//     R = 0
+//     for reward in reversed(rewards):
+//         R = reward + gamma * R
+//         discounted_rewards.insert(0, R)
+//     return torch.tensor(discounted_rewards)
 
-//     # Policy loss: additional clipping for negative advantage
-//     if advantage < 0:
-//         inner_clipped_rt_theta = torch.clamp(rt_theta, 1 - epsilon, delta1)
-//         policy_loss = -(inner_clipped_rt_theta * advantage).mean()
-//     else:
-//         policy_loss = -(clipped_rt_theta * advantage).mean()
+// def calculate_gae(next_value, rewards, masks, values, gamma=0.999, tau=0.95):
+//     gae = 0
+//     returns = []
+//     for step in reversed(range(len(rewards))):
+//         delta = rewards[step] + gamma * next_value * masks[step] - values[step]
+//         gae = delta + gamma * tau * masks[step] * gae
+//         next_value = values[step]
+//         returns.insert(0, gae + values[step])
+//     return returns
 
-//     # Value loss: clip return before calculating loss
-//     clipped_return = torch.clamp(R_gamma_t, -delta2, delta3)
-//     value_loss = torch.nn.functional.mse_loss(V_theta(st), clipped_return)
+// def trinal_clip_policy_loss(advantages, old_log_probs, log_probs, epsilon=0.2, delta1=3):
+//     ratio = torch.exp(log_probs - old_log_probs)
+//     surr1 = ratio * advantages
+//     surr2 = torch.clamp(ratio, 1 - epsilon, 1 + epsilon) * advantages
+//     surr3 = torch.clamp(ratio, 1 - epsilon, delta1) * advantages
+//     policy_loss = -torch.min(torch.min(surr1, surr2), surr3)
+//     return policy_loss.mean()
 
-//     return policy_loss, value_loss
+// def clipped_value_loss(old_values, values, rewards, delta2, delta3):
+//     clipped_values = torch.clamp(rewards, -delta2, delta3)
+//     value_loss = (clipped_values - values).pow(2)
+//     return value_loss.mean()
+
+// # Assuming we have the necessary inputs:
+// # actions, log_probs, old_log_probs, values, rewards, masks, next_value
+// # You would need to modify this to fit into your environment and training loop.
+
+// # Example usage within a training loop:
+// advantages = calculate_gae(next_value, rewards, masks, values)
+// discounted_rewards = calculate_discounted_rewards(rewards)
+// policy_loss = trinal_clip_policy_loss(advantages, old_log_probs, log_probs)
+// value_loss = clipped_value_loss(old_values, values, discounted_rewards, delta2, delta3)
