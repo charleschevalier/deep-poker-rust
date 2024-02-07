@@ -1,8 +1,9 @@
+use super::poker_network::PokerNetwork;
 use super::trainer_config::TrainerConfig;
 use crate::game::action::ActionConfig;
-use crate::game::hand_state::HandState;
+use crate::game::hand_state::{self, HandState};
 use crate::game::tree::Tree;
-use candle_core::Tensor;
+use candle_core::{DType, Device, Tensor};
 
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -12,6 +13,7 @@ struct Trainer<'a> {
     action_config: &'a ActionConfig,
     trainer_config: &'a TrainerConfig,
     tree: Tree<'a>,
+    device: Device,
 }
 
 impl<'a> Trainer<'a> {
@@ -19,37 +21,92 @@ impl<'a> Trainer<'a> {
         player_cnt: u32,
         action_config: &'a ActionConfig,
         trainer_config: &'a TrainerConfig,
+        device: Device,
     ) -> Trainer<'a> {
         Trainer {
             player_cnt,
             action_config,
             trainer_config,
             tree: Tree::new(player_cnt, action_config),
+            device,
         }
     }
 
     pub fn train(&mut self) {
-        // let mut dataset = Vec::new();
+        let mut trained_network = PokerNetwork::new(
+            self.player_cnt,
+            self.action_config,
+            self.device.clone(),
+            true,
+        );
 
-        // for _ in 0..self.trainer_config.max_iters {
-        //     for player in 0..self.player_cnt {
-        //         self.tree.traverse(player);
-        //         dataset.push(self.tree.hand_state.clone());
-        //     }
+        for _ in 0..self.trainer_config.max_iters {
+            let mut batch_states: Vec<(HandState, usize)> = Vec::new();
 
-        //     if dataset.len() >= self.trainer_config.max_dataset_cache {
-        //         // Shuffle the dataset
-        //         dataset.shuffle(&mut thread_rng());
+            for _ in 0..self.trainer_config.hands_per_player_per_iteration {
+                for player in 0..self.player_cnt {
+                    // TODO: select networks to use here
+                    self.tree.traverse(player, &vec![]);
 
-        //         while dataset.len() > self.trainer_config.batch_size {
-        //             // Take a data batch
-        //             let batch: Vec<_> = dataset.drain(0..self.trainer_config.batch_size).collect();
+                    for i in 0..self.tree.hand_state.as_ref().unwrap().action_states.len() {
+                        if self.tree.hand_state.as_ref().unwrap().action_states[i].player_to_move
+                            == player
+                        {
+                            batch_states.push((self.tree.hand_state.as_mut().unwrap().clone(), i));
+                        }
+                    }
+                }
+            }
 
-        //             // Train the model
-        //             self.train_model(&batch);
-        //         }
-        //     }
-        // }
+            // Iterate through batch states
+            /* vec![vec![vec![0.0; 4]; 13]; 5]; */
+
+            for batch in batch_states.chunks(self.trainer_config.batch_size) {
+                // Calculate inputs for each batch
+                let mut card_tensor_vec = Vec::new();
+                let mut action_tensor_vec = Vec::new();
+
+                for (hand_state, action_state_index) in batch {
+                    let (card_tensor, action_tensor) =
+                        hand_state.to_input(*action_state_index, self.action_config, &self.device);
+                    card_tensor_vec.push(card_tensor);
+                    action_tensor_vec.push(action_tensor);
+                }
+
+                let card_tensors = Tensor::stack(&card_tensor_vec, 0).unwrap();
+                let action_tensors = Tensor::stack(&action_tensor_vec, 0).unwrap();
+
+                // Forward pass
+                let (actor_output, critic_output) =
+                    trained_network.forward(&card_tensors, &action_tensors);
+
+                // Calculate advantage GAE
+                let mut advantage_gae = Vec::new();
+                for (hand_state, action_state_index) in batch {
+                    let gae = self.calculate_advantage_gae(hand_state, 0.999, 0.95);
+                    advantage_gae.push(gae);
+                }
+            }
+
+            // if dataset.len() >= self.trainer_config.max_dataset_cache {
+            //     while dataset.len() > self.trainer_config.batch_size {
+            //         // Take a data batch
+            //         let batch: Vec<_> = dataset.drain(0..self.trainer_config.batch_size).collect();
+
+            //         // Train the model
+            //         self.train_model(&batch);
+            //     }
+            // }
+            // if dataset.len() >= self.trainer_config.max_dataset_cache {
+            //     while dataset.len() > self.trainer_config.batch_size {
+            //         // Take a data batch
+            //         let batch: Vec<_> = dataset.drain(0..self.trainer_config.batch_size).collect();
+
+            //         // Train the model
+            //         self.train_model(&batch);
+            //     }
+            // }
+        }
     }
 
     fn train_model(&self, batch: &Vec<Option<HandState>>) {
