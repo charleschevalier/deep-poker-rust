@@ -118,5 +118,5 @@ pub trait State<'a> {
     fn get_type(&self) -> StateType;
     fn get_child(&mut self, index: usize) -> &mut Option<Box<dyn State<'a> + 'a>>;
     fn get_child_count(&self) -> usize;
-    fn get_valid_actions_mask(&self) -> Vec<f32>;
+    fn get_valid_actions_mask(&self) -> Vec<bool>;
 }

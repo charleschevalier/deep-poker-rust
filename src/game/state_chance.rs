@@ -27,7 +27,7 @@ impl<'a> State<'a> for StateChance<'a> {
         panic!("Not implemented");
     }
 
-    fn get_valid_actions_mask(&self) -> Vec<f32> {
+    fn get_valid_actions_mask(&self) -> Vec<bool> {
         panic!("Not implemented");
     }
 

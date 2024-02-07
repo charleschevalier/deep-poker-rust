@@ -98,14 +98,9 @@ impl<'a> Tree<'a> {
 
             let action_index = 0;
 
-            hand_state.action_states.push(ActionState {
-                history: state.get_state_data().history.clone(),
-                player_to_move: traverser,
-                reward: 0.0,
-                valid_actions_mask: state.get_valid_actions_mask(),
-                action_taken: action_index,
-                is_terminal: false,
-            });
+            hand_state
+                .action_states
+                .push(Self::build_action_state(state, action_index));
 
             Tree::traverse_state(
                 traverser,
@@ -122,12 +117,36 @@ impl<'a> Tree<'a> {
             let mut rng = rand::thread_rng();
             let action_index: usize = rng.gen_range(0..state.get_child_count());
 
+            hand_state
+                .action_states
+                .push(Self::build_action_state(state, action_index));
+
             Tree::traverse_state(
                 traverser,
                 state.get_child(action_index),
                 hand_state,
                 networks,
             );
+        }
+    }
+
+    fn build_action_state(state: &mut Box<dyn State<'a> + 'a>, action_index: usize) -> ActionState {
+        ActionState {
+            player_to_move: state.get_player_to_move() as u32,
+            reward: 0.0,
+            valid_actions_mask: state.get_valid_actions_mask(),
+            action_taken_index: action_index,
+            action_taken: state
+                .get_child(action_index)
+                .as_ref()
+                .unwrap()
+                .get_state_data()
+                .history
+                .last()
+                .unwrap()
+                .clone(),
+            is_terminal: false,
+            street: state.get_state_data().street,
         }
     }
 }

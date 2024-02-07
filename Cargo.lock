@@ -10,9 +10,9 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 
 [[package]]
 name = "bindgen_cuda"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcb349f499c53ad8d7b98e9657c61d6225c2812bac84504a97373e3884ca9bac"
+checksum = "853f25ad4724e82569cc7dd3b08048d21bd15950208f8b0ceeab6ac062b33c1f"
 dependencies = [
  "glob",
  "num_cpus",
@@ -33,9 +33,9 @@ checksum = "ed570934406eb16438a4e976b1b4500774099c13b8cb96eec99f620f05090ddf"
 
 [[package]]
 name = "bytemuck"
-version = "1.14.1"
+version = "1.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed2490600f404f2b94c167e31d3ed1d5f3c225a0f3b80230053b3e0b7b962bd9"
+checksum = "ea31d69bda4949c1c1562c1e6f042a1caefac98cdc8a298260a2ff41c1e2d42b"
 dependencies = [
  "bytemuck_derive",
 ]
@@ -60,7 +60,7 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 [[package]]
 name = "candle-core"
 version = "0.4.0"
-source = "git+https://github.com/huggingface/candle.git#a83ca2ece05269ad3afd7744e7a5145de891705e"
+source = "git+https://github.com/huggingface/candle.git#b75e8945bc7c67106be6288b9f357efa8068e62e"
 dependencies = [
  "byteorder",
  "candle-kernels",
@@ -82,7 +82,7 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.4.0"
-source = "git+https://github.com/huggingface/candle.git#a83ca2ece05269ad3afd7744e7a5145de891705e"
+source = "git+https://github.com/huggingface/candle.git#b75e8945bc7c67106be6288b9f357efa8068e62e"
 dependencies = [
  "bindgen_cuda",
 ]
@@ -90,7 +90,7 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.4.0"
-source = "git+https://github.com/huggingface/candle.git#a83ca2ece05269ad3afd7744e7a5145de891705e"
+source = "git+https://github.com/huggingface/candle.git#b75e8945bc7c67106be6288b9f357efa8068e62e"
 dependencies = [
  "candle-core",
  "half",
@@ -394,9 +394,9 @@ dependencies = [
 
 [[package]]
 name = "num-complex"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ba157ca0885411de85d6ca030ba7e2a83a28636056c7c699b07c8b6f7383214"
+checksum = "23c6602fda94a57c990fe0df199a035d83576b496aa29f4e634a8ac6004e68a6"
 dependencies = [
  "bytemuck",
  "num-traits",

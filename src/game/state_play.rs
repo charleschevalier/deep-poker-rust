@@ -8,7 +8,7 @@ pub struct StatePlay<'a> {
     pub action_config: &'a ActionConfig,
     pub state_data: StateData,
     pub children: Vec<Option<Box<dyn State<'a> + 'a>>>,
-    pub valid_actions_mask: Vec<f32>,
+    pub valid_actions_mask: Vec<bool>,
 }
 
 impl<'a> State<'a> for StatePlay<'a> {
@@ -24,7 +24,7 @@ impl<'a> State<'a> for StatePlay<'a> {
         self.children.len()
     }
 
-    fn get_valid_actions_mask(&self) -> Vec<f32> {
+    fn get_valid_actions_mask(&self) -> Vec<bool> {
         self.valid_actions_mask.clone()
     }
 
@@ -120,10 +120,10 @@ impl<'a> StatePlay<'a> {
                         .push(Some(Box::new(StateTerminal::new(new_state_data))));
                 }
             }
-            self.valid_actions_mask.push(1.0);
+            self.valid_actions_mask.push(true);
         } else {
             self.children.push(None);
-            self.valid_actions_mask.push(0.0);
+            self.valid_actions_mask.push(false);
         }
     }
 
@@ -159,10 +159,10 @@ impl<'a> StatePlay<'a> {
                 self.children
                     .push(Some(Box::new(StateTerminal::new(new_state_data))));
             }
-            self.valid_actions_mask.push(1.0);
+            self.valid_actions_mask.push(true);
         } else {
             self.children.push(None);
-            self.valid_actions_mask.push(0.0);
+            self.valid_actions_mask.push(false);
         }
     }
 
@@ -190,7 +190,7 @@ impl<'a> StatePlay<'a> {
                     / 100.0)
         {
             self.children.push(None);
-            self.valid_actions_mask.push(0.0);
+            self.valid_actions_mask.push(false);
             return;
         }
 
@@ -215,7 +215,7 @@ impl<'a> StatePlay<'a> {
                 self.action_config,
                 new_state_data,
             ))));
-            self.valid_actions_mask.push(1.0);
+            self.valid_actions_mask.push(true);
         } else {
             self.print_actions();
             panic!("Someone raised but there is noone left to play next");
@@ -258,10 +258,10 @@ impl<'a> StatePlay<'a> {
                 self.children
                     .push(Some(Box::new(StateTerminal::new(new_state_data))));
             }
-            self.valid_actions_mask.push(1.0);
+            self.valid_actions_mask.push(true);
         } else {
             self.children.push(None);
-            self.valid_actions_mask.push(0.0);
+            self.valid_actions_mask.push(false);
         }
     }
 }

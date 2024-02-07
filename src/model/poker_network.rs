@@ -1,25 +1,38 @@
 use super::actor_network::ActorNetwork;
 use super::critic_network::CriticNetwork;
 use super::siamese_network::SiameseNetwork;
-use crate::game::{action::ActionConfig, hand_state::HandState};
+use crate::game::{
+    action::{ActionConfig, ActionType},
+    action_state::{self, ActionState},
+    hand_state::HandState,
+};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::{VarBuilder, VarMap};
+use poker::card;
 
-pub struct PokerNetwork {
+pub struct PokerNetwork<'a> {
+    player_count: u32,
+    action_config: &'a ActionConfig,
     siamese_network: SiameseNetwork,
     actor_network: ActorNetwork,
     critic_network: Option<CriticNetwork>,
+    device: Device,
 }
 
-impl PokerNetwork {
-    pub fn new(player_cnt: u32, action_config: &ActionConfig, train: bool) -> PokerNetwork {
+impl<'a> PokerNetwork<'a> {
+    pub fn new(
+        player_count: u32,
+        action_config: &ActionConfig,
+        device: Device,
+        train: bool,
+    ) -> PokerNetwork {
         let var_map = VarMap::new();
         let vb = VarBuilder::from_varmap(&var_map, DType::F32, &Device::Cpu);
 
         let siamese_network = SiameseNetwork::new(
-            player_cnt,
+            player_count,
             3 + action_config.postflop_raise_sizes.len() as u32, // Each raise size + fold, call, check
-            player_cnt as usize * 3, // 3 actions max per player per street => TODO: prevent situations where we have more than 3 actions
+            player_count as usize * 3, // 3 actions max per player per street => TODO: prevent situations where we have more than 3 actions
             &vb,
         );
 
@@ -33,6 +46,9 @@ impl PokerNetwork {
         };
 
         PokerNetwork {
+            player_count,
+            action_config,
+            device,
             siamese_network,
             actor_network,
             critic_network,
@@ -53,12 +69,5 @@ impl PokerNetwork {
         } else {
             (actor_output, None)
         }
-    }
-
-    pub fn convert_input(hand_state: HandState) -> (Tensor, Tensor) {
-        let mut card_inputs: Tensor;
-        let mut action_inputs: Tensor;
-
-        (card_inputs, action_inputs)
     }
 }
