@@ -73,10 +73,13 @@ impl<'a> Tree<'a> {
         let state = state_option.as_mut().unwrap();
 
         if matches!(state.get_type(), StateType::Terminal) {
-            // Use reward from terminal state
-            let last_state = hand_state.action_states.last_mut().unwrap();
-            last_state.reward = state.get_reward(traverser);
-            last_state.is_terminal = true;
+            // Use reward from terminal state. We may have no action states if every player folded
+            // except the traverser in BB
+            if !hand_state.action_states.is_empty() {
+                let last_state = hand_state.action_states.last_mut().unwrap();
+                last_state.reward = state.get_reward(traverser);
+                last_state.is_terminal = true;
+            }
         } else if !state.is_player_in_hand(traverser) {
             // Use the negative of his bet as reward
             let last_state = hand_state.action_states.last_mut().unwrap();
@@ -122,9 +125,11 @@ impl<'a> Tree<'a> {
                 panic!("Invalid action chosen");
             }
 
-            hand_state
-                .action_states
-                .push(Self::build_action_state(state, action_index));
+            if state.get_player_to_move() == traverser as i32 {
+                hand_state
+                    .action_states
+                    .push(Self::build_action_state(state, action_index));
+            }
 
             Self::traverse_state(
                 traverser,

@@ -3,6 +3,7 @@
 
 use candle_core::Device;
 use model::trainer_config::TrainerConfig;
+use std::backtrace::Backtrace;
 
 mod game;
 mod model;
@@ -31,10 +32,19 @@ fn main() {
         batch_size: 64,
         hands_per_player_per_iteration: 100,
         update_step: 10,
+        ppo_epsilon: 0.2,
+        ppo_delta_1: 3.0,
+        ppo_delta_2: 0.2,
+        ppo_delta_3: 0.2,
     };
 
     let mut trainer = model::trainer::Trainer::new(3, &action_config, &trainer_config, Device::Cpu);
-    trainer.train();
+    if let Err(err) = trainer.train() {
+        println!("Error: {}", err);
+
+        let backtrace = Backtrace::capture();
+        println!("Backtrace:\n{:?}", backtrace);
+    }
 
     // Test network inference
     // let var_map = VarMap::new();

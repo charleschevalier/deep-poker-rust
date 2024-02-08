@@ -22,6 +22,32 @@ impl HandState {
         None
     }
 
+    pub fn get_all_tensors(
+        &self,
+        action_config: &ActionConfig,
+        device: &candle_core::Device,
+    ) -> (Tensor, Tensor) {
+        // Iterate on states for traverser
+        let mut card_tensors: Vec<Tensor> = Vec::new();
+        let mut action_tensors: Vec<Tensor> = Vec::new();
+
+        for i in 0..self.action_states.len() {
+            if self.action_states[i].player_to_move == self.traverser {
+                let (card_tensor, action_tensor) =
+                    self.action_state_to_input(i, action_config, device);
+                card_tensors.push(card_tensor);
+                action_tensors.push(action_tensor);
+            }
+        }
+
+        let out1 = Tensor::stack(&card_tensors, 0).unwrap();
+
+        (
+            Tensor::stack(&card_tensors, 0).unwrap(),
+            Tensor::stack(&action_tensors, 0).unwrap(),
+        )
+    }
+
     pub fn get_tensors(
         &self,
         action_state_index: usize,
@@ -69,7 +95,7 @@ impl HandState {
         valid_actions_mask: Vec<bool>,
     ) -> (Tensor, Tensor) {
         // Create card tensor
-        // Shape is (street_cnt + 1 for all cards) x number_of_ranks x number_of_suits
+        // Shape is (street_cnt + 1 for all cards) x number_of_suits x number_of_ranks
         let mut card_vecs: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 4]; 5];
 
         // Set hand cards
@@ -113,7 +139,7 @@ impl HandState {
         // }
 
         // Create action tensor
-        // Shape is (street_cnt * max_actions_per_street) x max_number_of_actions x (player_count + 2 for sum and legal)
+        // Shape is (street_cnt * max_actions_per_street) x (player_count + 2 for sum and legal) x max_number_of_actions
         let mut action_vecs: Vec<Vec<Vec<f32>>> =
             vec![
                 vec![
