@@ -1,6 +1,9 @@
 // use candle_core::{DType, Device, Tensor};
 // use candle_nn::{VarBuilder, VarMap};
 
+use candle_core::Device;
+use model::trainer_config::TrainerConfig;
+
 mod game;
 mod model;
 
@@ -9,11 +12,29 @@ fn main() {
     action_config.preflop_raise_sizes = vec![2.0, 3.0];
     action_config.postflop_raise_sizes = vec![0.25, 0.5, 0.66, 1.0];
 
-    let mut tree = game::tree::Tree::new(3, &action_config);
+    // let mut tree = game::tree::Tree::new(3, &action_config);
 
     // for i in 0..3 {
     //     tree.traverse(i);
     // }
+
+    /*pub struct TrainerConfig {
+        pub max_iters: usize,
+        pub batch_size: usize,
+        pub hands_per_player_per_iteration: usize,
+        pub update_step: usize,
+    }
+     */
+
+    let trainer_config = TrainerConfig {
+        max_iters: 100,
+        batch_size: 64,
+        hands_per_player_per_iteration: 100,
+        update_step: 10,
+    };
+
+    let mut trainer = model::trainer::Trainer::new(3, &action_config, &trainer_config, Device::Cpu);
+    trainer.train();
 
     // Test network inference
     // let var_map = VarMap::new();

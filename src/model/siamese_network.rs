@@ -46,12 +46,12 @@ impl SiameseNetwork {
 
         let merge_layer = linear(
             card_conv_out_size + action_conv_out_size,
-            4096,
+            256,
             vb.pp("merged"),
         )
         .unwrap();
 
-        let output_layer = linear(4096, 4096, vb.pp("output_layer")).unwrap();
+        let output_layer = linear(256, 128, vb.pp("output_layer")).unwrap();
 
         SiameseNetwork {
             card_conv,
@@ -65,40 +65,40 @@ impl SiameseNetwork {
         let card_output = self.card_conv.forward(card_tensor).unwrap();
 
         // Print card_output dims
-        for dim in card_output.shape().dims() {
-            println!("Card output dim: {}", dim);
-        }
+        // for dim in card_output.shape().dims() {
+        //     println!("Card output dim: {}", dim);
+        // }
 
         let action_output = self.action_conv.forward(action_tensor).unwrap();
 
         // Print action_output dims
-        for dim in action_output.shape().dims() {
-            println!("Action output dim: {}", dim);
-        }
+        // for dim in action_output.shape().dims() {
+        //     println!("Action output dim: {}", dim);
+        // }
 
         let card_output_flat = card_output.flatten(1, 3).unwrap();
         let action_output_flat = action_output.flatten(1, 3).unwrap();
 
-        println!(
-            "card_output_flat dims: {:?}",
-            card_output_flat.shape().dims()
-        );
-        println!(
-            "action_output_flat dims: {:?}",
-            action_output_flat.shape().dims()
-        );
+        // println!(
+        //     "card_output_flat dims: {:?}",
+        //     card_output_flat.shape().dims()
+        // );
+        // println!(
+        //     "action_output_flat dims: {:?}",
+        //     action_output_flat.shape().dims()
+        // );
 
         let merged = Tensor::cat(&[&card_output_flat, &action_output_flat], 1).unwrap();
 
-        println!("merged dims: {:?}", merged.shape().dims());
+        // println!("merged dims: {:?}", merged.shape().dims());
 
         let merged_output = self.merge_layer.forward(&merged).unwrap();
         let res = self.output_layer.forward(&merged_output).unwrap();
 
         // Print res dims
-        for dim in res.shape().dims() {
-            println!("Res dim: {}", dim);
-        }
+        // for dim in res.shape().dims() {
+        //     println!("Res dim: {}", dim);
+        // }
 
         res
     }

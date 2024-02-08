@@ -3,6 +3,7 @@ use super::action::ActionType;
 use super::action_state::ActionState;
 use candle_core::Tensor;
 use poker::Card;
+
 #[derive(Clone, Debug)]
 pub struct HandState {
     pub traverser: u32,
@@ -12,61 +13,119 @@ pub struct HandState {
 }
 
 impl HandState {
-    pub fn to_input(
+    pub fn get_next_state_index(&self, state_index: usize) -> Option<usize> {
+        for i in state_index + 1..self.action_states.len() {
+            if self.action_states[i].player_to_move == self.traverser {
+                return Some(state_index);
+            }
+        }
+        None
+    }
+
+    pub fn get_tensors(
         &self,
         action_state_index: usize,
         action_config: &ActionConfig,
         device: &candle_core::Device,
-    ) -> (Tensor, Tensor) {
-        let action_state = &self.action_states[action_state_index];
+    ) -> (Tensor, Tensor, Tensor, Tensor, bool) {
+        let (card_tensor, action_tensor) =
+            self.action_state_to_input(action_state_index, action_config, device);
+        let next_state_index = self.get_next_state_index(action_state_index);
+        let (next_card_tensor, next_action_tensor) = match next_state_index {
+            Some(index) => self.action_state_to_input(index, action_config, device),
+            None => (
+                {
+                    let card_vecs: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 4]; 5];
+                    Tensor::new(card_vecs, device).unwrap()
+                },
+                {
+                    let action_vecs: Vec<Vec<Vec<f32>>> =
+                        vec![
+                            vec![
+                                vec![0.0; 3 + action_config.postflop_raise_sizes.len()];
+                                action_config.player_count as usize + 2
+                            ];
+                            4 * action_config.max_actions_per_street as usize
+                        ];
+                    Tensor::new(action_vecs, device).unwrap()
+                },
+            ),
+        };
+        (
+            card_tensor,
+            action_tensor,
+            next_card_tensor,
+            next_action_tensor,
+            next_state_index.is_none(),
+        )
+    }
 
+    pub fn to_input(
+        &self,
+        street: u8,
+        action_config: &ActionConfig,
+        device: &candle_core::Device,
+        current_state_index: usize,
+        valid_actions_mask: Vec<bool>,
+    ) -> (Tensor, Tensor) {
         // Create card tensor
         // Shape is (street_cnt + 1 for all cards) x number_of_ranks x number_of_suits
-        let mut card_vecs: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 4]; 13]; 5];
+        let mut card_vecs: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 4]; 5];
 
         // Set hand cards
         for card in self.hand.iter() {
-            card_vecs[0][card.rank() as usize][card.suit() as usize] = 1.0;
-            card_vecs[5][card.rank() as usize][card.suit() as usize] = 1.0;
+            card_vecs[0][card.suit() as usize][card.rank() as usize] = 1.0;
+            card_vecs[4][card.suit() as usize][card.rank() as usize] = 1.0;
         }
 
         // Set flop cards
-        if action_state.street > 1 {
+        if street > 1 {
             for i in 0..3 {
                 let card = self.board[i];
-                card_vecs[1][card.rank() as usize][card.suit() as usize] = 1.0;
-                card_vecs[5][card.rank() as usize][card.suit() as usize] = 1.0;
+                card_vecs[1][card.suit() as usize][card.rank() as usize] = 1.0;
+                card_vecs[4][card.suit() as usize][card.rank() as usize] = 1.0;
             }
         }
 
         // Set turn cards
-        if action_state.street > 2 {
+        if street > 2 {
             let card = self.board[3];
-            card_vecs[2][card.rank() as usize][card.suit() as usize] = 1.0;
-            card_vecs[5][card.rank() as usize][card.suit() as usize] = 1.0;
+            card_vecs[2][card.suit() as usize][card.rank() as usize] = 1.0;
+            card_vecs[4][card.suit() as usize][card.rank() as usize] = 1.0;
         }
 
         // Set river cards
-        if action_state.street > 3 {
+        if street > 3 {
             let card = self.board[4];
-            card_vecs[3][card.rank() as usize][card.suit() as usize] = 1.0;
-            card_vecs[5][card.rank() as usize][card.suit() as usize] = 1.0;
+            card_vecs[3][card.suit() as usize][card.rank() as usize] = 1.0;
+            card_vecs[4][card.suit() as usize][card.rank() as usize] = 1.0;
         }
+
+        // Print card_vecs as matrix
+        // for i in 0..5 {
+        //     for j in 0..4 {
+        //         for k in 0..13 {
+        //             print!("{}", card_vecs[i][j][k]);
+        //         }
+        //         println!();
+        //     }
+        //     println!();
+        // }
 
         // Create action tensor
         // Shape is (street_cnt * max_actions_per_street) x max_number_of_actions x (player_count + 2 for sum and legal)
         let mut action_vecs: Vec<Vec<Vec<f32>>> =
             vec![
                 vec![
-                    vec![0.0; action_config.player_count as usize + 2];
-                    3 + action_config.postflop_raise_sizes.len()
+                    vec![0.0; 3 + action_config.postflop_raise_sizes.len()];
+                    action_config.player_count as usize + 2
                 ];
                 4 * action_config.max_actions_per_street as usize
             ];
 
         let mut action_cnt: usize = 0;
         let mut current_street: u8 = 0;
-        for action_state_it in self.action_states.iter().take(action_state_index + 1) {
+        for action_state_it in self.action_states.iter().take(current_state_index + 1) {
             // Reset action count per player for a new street
             let action_street = action_state_it.street - 1; // Street starts at 1 in game tree
             if action_street > current_street {
@@ -78,27 +137,24 @@ impl HandState {
                 ActionType::Fold => 0,
                 ActionType::Call => 1,
                 ActionType::Raise => 2 + action_state_it.action_taken.raise_index as usize,
-                ActionType::AllIn => 2 + action_config.postflop_raise_sizes.len() as usize,
+                ActionType::AllIn => 2 + action_config.postflop_raise_sizes.len(),
                 _ => 0,
             };
 
             // Set player action in tensor
-            action_vecs[(current_street - 1) as usize
-                * action_config.max_actions_per_street as usize
-                + action_cnt as usize][action_index][action_state_it.player_to_move as usize] = 1.0;
+            action_vecs[current_street as usize * action_config.max_actions_per_street as usize
+                + action_cnt][action_state_it.player_to_move as usize][action_index] = 1.0;
 
             // Increment sum of actions
-            action_vecs[(current_street - 1) as usize
-                * action_config.max_actions_per_street as usize
-                + action_cnt as usize][action_index][action_config.player_count as usize] += 1.0;
+            action_vecs[current_street as usize * action_config.max_actions_per_street as usize
+                + action_cnt][action_config.player_count as usize][action_index] += 1.0;
 
             // Set legal actions
-            for i in 0..action_state.valid_actions_mask.len() {
-                if action_state.valid_actions_mask[i] {
-                    action_vecs[(current_street - 1) as usize
+            for (i, valid) in valid_actions_mask.iter().enumerate() {
+                if *valid {
+                    action_vecs[current_street as usize
                         * action_config.max_actions_per_street as usize
-                        + action_cnt as usize][action_index]
-                        [action_config.player_count as usize + 2] = 1.0;
+                        + action_cnt][action_config.player_count as usize + 1][i] = 1.0;
                 }
             }
 
@@ -106,9 +162,37 @@ impl HandState {
             action_cnt += 1;
         }
 
+        // Print action_vecs as matrix
+        // for i in 0..4 * action_config.max_actions_per_street as usize {
+        //     for j in 0..action_config.player_count as usize + 2 {
+        //         for k in 0..3 + action_config.postflop_raise_sizes.len() {
+        //             print!("{}", action_vecs[i][j][k]);
+        //         }
+        //         println!();
+        //     }
+        //     println!();
+        // }
+
         (
-            Tensor::new(card_vecs, &device).unwrap(),
-            Tensor::new(action_vecs, &device).unwrap(),
+            Tensor::new(card_vecs, device).unwrap(),
+            Tensor::new(action_vecs, device).unwrap(),
+        )
+    }
+
+    fn action_state_to_input(
+        &self,
+        action_state_index: usize,
+        action_config: &ActionConfig,
+        device: &candle_core::Device,
+    ) -> (Tensor, Tensor) {
+        let action_state = &self.action_states[action_state_index];
+
+        self.to_input(
+            action_state.street,
+            action_config,
+            device,
+            action_state_index,
+            action_state.valid_actions_mask.clone(),
         )
     }
 }

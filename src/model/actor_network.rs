@@ -8,8 +8,8 @@ pub struct ActorNetwork {
 
 impl ActorNetwork {
     pub fn new(vb: &VarBuilder, action_count: usize) -> ActorNetwork {
-        let linear_1 = linear(4096, 8192, vb.pp("actor_linear_1")).unwrap();
-        let linear_2 = linear(8192, action_count, vb.pp("actor_linear_2")).unwrap();
+        let linear_1 = linear(128, 256, vb.pp("actor_linear_1")).unwrap();
+        let linear_2 = linear(256, action_count, vb.pp("actor_linear_2")).unwrap();
 
         ActorNetwork { linear_1, linear_2 }
     }

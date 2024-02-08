@@ -8,8 +8,8 @@ pub struct CriticNetwork {
 
 impl CriticNetwork {
     pub fn new(vb: &VarBuilder) -> CriticNetwork {
-        let linear_1 = linear(4096, 8192, vb.pp("critic_linear_1")).unwrap();
-        let linear_2 = linear(8192, 1, vb.pp("critic_linear_2")).unwrap();
+        let linear_1 = linear(128, 256, vb.pp("critic_linear_1")).unwrap();
+        let linear_2 = linear(256, 1, vb.pp("critic_linear_2")).unwrap();
 
         CriticNetwork { linear_1, linear_2 }
     }

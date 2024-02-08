@@ -1,3 +1,5 @@
+use std::vec;
+
 use super::poker_network::PokerNetwork;
 use super::trainer_config::TrainerConfig;
 use crate::game::action::ActionConfig;
@@ -8,7 +10,7 @@ use candle_core::{DType, Device, Tensor};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 
-struct Trainer<'a> {
+pub struct Trainer<'a> {
     player_cnt: u32,
     action_config: &'a ActionConfig,
     trainer_config: &'a TrainerConfig,
@@ -33,6 +35,9 @@ impl<'a> Trainer<'a> {
     }
 
     pub fn train(&mut self) {
+        let gamma = 0.99;
+        let lamda = 0.95;
+
         let mut trained_network = PokerNetwork::new(
             self.player_cnt,
             self.action_config,
@@ -46,7 +51,7 @@ impl<'a> Trainer<'a> {
             for _ in 0..self.trainer_config.hands_per_player_per_iteration {
                 for player in 0..self.player_cnt {
                     // TODO: select networks to use here
-                    self.tree.traverse(player, &vec![]);
+                    self.tree.traverse(player, &vec![&trained_network; 3]);
 
                     for i in 0..self.tree.hand_state.as_ref().unwrap().action_states.len() {
                         if self.tree.hand_state.as_ref().unwrap().action_states[i].player_to_move
@@ -65,47 +70,81 @@ impl<'a> Trainer<'a> {
                 // Calculate inputs for each batch
                 let mut card_tensor_vec = Vec::new();
                 let mut action_tensor_vec = Vec::new();
+                let mut next_card_tensor_vec = Vec::new();
+                let mut next_action_tensor_vec = Vec::new();
+                let mut rewards = Vec::new();
+                let mut terminal_mask = Vec::new();
 
                 for (hand_state, action_state_index) in batch {
-                    let (card_tensor, action_tensor) =
-                        hand_state.to_input(*action_state_index, self.action_config, &self.device);
+                    let (
+                        card_tensor,
+                        action_tensor,
+                        next_card_tensor,
+                        next_action_tensor,
+                        is_terminal,
+                    ) = hand_state.get_tensors(
+                        *action_state_index,
+                        self.action_config,
+                        &self.device,
+                    );
                     card_tensor_vec.push(card_tensor);
                     action_tensor_vec.push(action_tensor);
+                    next_card_tensor_vec.push(next_card_tensor);
+                    next_action_tensor_vec.push(next_action_tensor);
+                    rewards.push(hand_state.action_states[*action_state_index].reward);
+                    terminal_mask.push(if !is_terminal { 1.0 } else { 0.0 });
                 }
+
+                // println!("{:?}", card_tensor_vec.len());
+                // println!("{:?}", action_tensor_vec.len());
+                // println!("{:?}", next_card_tensor_vec.len());
+                // println!("{:?}", next_action_tensor_vec.len());
+                // println!("{:?}", rewards.len());
+                // println!("{:?}", terminal_mask.len());
 
                 let card_tensors = Tensor::stack(&card_tensor_vec, 0).unwrap();
                 let action_tensors = Tensor::stack(&action_tensor_vec, 0).unwrap();
+                let next_card_tensors = Tensor::stack(&next_card_tensor_vec, 0).unwrap();
+                let next_action_tensors = Tensor::stack(&next_action_tensor_vec, 0).unwrap();
+
+                // println!("{:?}", card_tensors.shape());
+                // println!("{:?}", action_tensors.shape());
+                // println!("{:?}", next_card_tensors.shape());
+                // println!("{:?}", next_action_tensors.shape());
 
                 // Forward pass
                 let (actor_output, critic_output) =
                     trained_network.forward(&card_tensors, &action_tensors);
+                let (_, next_critic_output) =
+                    trained_network.forward(&next_card_tensors, &next_action_tensors);
+
+                // println!("{:?}", actor_output.shape());
+                // println!("{:?}", critic_output.as_ref().unwrap().shape());
+                // println!("{:?}", next_critic_output.as_ref().unwrap().shape());
 
                 // Calculate advantage GAE
-                let mut advantage_gae = Vec::new();
-                for (hand_state, action_state_index) in batch {
-                    let gae = self.calculate_advantage_gae(hand_state, 0.999, 0.95);
-                    advantage_gae.push(gae);
-                }
+                let (advantage_gae, values_target) = self.calculate_advantage_gae(
+                    &rewards,
+                    &critic_output
+                        .unwrap()
+                        .squeeze(1)
+                        .unwrap()
+                        .to_vec1()
+                        .unwrap(),
+                    &next_critic_output
+                        .unwrap()
+                        .squeeze(1)
+                        .unwrap()
+                        .to_vec1()
+                        .unwrap(),
+                    gamma,
+                    lamda,
+                    &terminal_mask,
+                );
+
+                // println!("{:?}", advantage_gae);
+                // println!("{:?}", values_target);
             }
-
-            // if dataset.len() >= self.trainer_config.max_dataset_cache {
-            //     while dataset.len() > self.trainer_config.batch_size {
-            //         // Take a data batch
-            //         let batch: Vec<_> = dataset.drain(0..self.trainer_config.batch_size).collect();
-
-            //         // Train the model
-            //         self.train_model(&batch);
-            //     }
-            // }
-            // if dataset.len() >= self.trainer_config.max_dataset_cache {
-            //     while dataset.len() > self.trainer_config.batch_size {
-            //         // Take a data batch
-            //         let batch: Vec<_> = dataset.drain(0..self.trainer_config.batch_size).collect();
-
-            //         // Train the model
-            //         self.train_model(&batch);
-            //     }
-            // }
         }
     }
 
@@ -113,29 +152,30 @@ impl<'a> Trainer<'a> {
         // Get inputs and rewards
     }
 
-    fn calculate_advantage_gae(&self, hand_state: &HandState, gamma: f32, tau: f32) -> Vec<f32> {
-        let mut gae = 0.0;
-        let mut returns = Vec::new();
+    fn calculate_advantage_gae(
+        &self,
+        rewards: &Vec<f32>,
+        values: &Vec<f32>,
+        next_values: &Vec<f32>,
+        gamma: f32,
+        lamda: f32,
+        terminal_mask: &Vec<f32>,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let batch_size = rewards.len();
+        let mut advantage = vec![0.0; batch_size + 1];
 
-        // for action_state in hand_state.action_states.iter().rev() {
-        //     let delta = action_state.reward + gamma * action_state.next_value * action_state.mask
-        //         - action_state.value;
-        //     gae = delta + gamma * tau * action_state.mask * gae;
-        //     returns.insert(0, gae + action_state.value);
-        // }
+        for t in (0..batch_size).rev() {
+            let delta = rewards[t] + (gamma * next_values[t] * terminal_mask[t]) - values[t];
+            advantage[t] = delta + (gamma * lamda * advantage[t + 1] * terminal_mask[t]);
+        }
+        let mut value_target = values.clone();
+        for i in 0..batch_size {
+            value_target[i] += advantage[i];
+        }
 
-        returns
+        advantage.truncate(batch_size);
+        (advantage, value_target)
     }
-
-    // def calculate_gae(next_value, rewards, masks, values, gamma=0.999, tau=0.95):
-    //     gae = 0
-    //     returns = []
-    //     for step in reversed(range(len(rewards))):
-    //         delta = rewards[step] + gamma * next_value * masks[step] - values[step]
-    //         gae = delta + gamma * tau * masks[step] * gae
-    //         next_value = values[step]
-    //         returns.insert(0, gae + values[step])
-    //     return returns
 
     fn get_inputs(&self, hand: &HandState) -> Vec<f32> {
         // let mut card_inputs = Vec::new();

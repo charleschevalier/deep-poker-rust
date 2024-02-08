@@ -1,3 +1,5 @@
+use candle_core::Tensor;
+use poker::card;
 use rand::Rng;
 
 use super::action::ActionConfig;
@@ -42,11 +44,13 @@ impl<'a> Tree<'a> {
 
     pub fn traverse(&mut self, traverser: u32, networks: &Vec<&PokerNetwork>) {
         self.reset(traverser);
+
         Tree::traverse_state(
             traverser,
             &mut self.root,
             self.hand_state.as_mut().unwrap(),
             networks,
+            self.action_config,
         );
         println!(
             "Action states length: {}",
@@ -59,6 +63,7 @@ impl<'a> Tree<'a> {
         state_option: &mut Option<Box<dyn State<'a> + 'a>>,
         hand_state: &mut HandState,
         networks: &Vec<&PokerNetwork>,
+        action_config: &ActionConfig,
     ) {
         // If state is None, panic
         if state_option.is_none() {
@@ -82,31 +87,12 @@ impl<'a> Tree<'a> {
             state.create_children();
 
             // Traverse first child
-            return Tree::traverse_state(traverser, state.get_child(0), hand_state, networks);
-        } else if state.is_player_turn(traverser as i32) {
-            // Traverse all children
-            state.create_children();
-
-            // let siamese_output = siamese_networks[traverser as usize].forward(
-            //     &state.get_state_data().get_input(traverser),
-            //     &state.get_valid_actions_mask(),
-            // );
-            // let actor_output = actor_networks[traverser as usize].forward(
-            //     &state.get_state_data().get_input(traverser),
-            //     &state.get_valid_actions_mask(),
-            // );
-
-            let action_index = 0;
-
-            hand_state
-                .action_states
-                .push(Self::build_action_state(state, action_index));
-
-            Tree::traverse_state(
+            return Self::traverse_state(
                 traverser,
-                state.get_child(action_index),
+                state.get_child(0),
                 hand_state,
                 networks,
+                action_config,
             );
         } else {
             // Traverse next player
@@ -114,18 +100,38 @@ impl<'a> Tree<'a> {
             // Get rand, random number between 0 and state.get_child_count()
 
             state.create_children();
-            let mut rng = rand::thread_rng();
-            let action_index: usize = rng.gen_range(0..state.get_child_count());
+
+            let (card_tensor, action_tensor) = hand_state.to_input(
+                state.get_state_data().street,
+                action_config,
+                &candle_core::Device::Cpu,
+                hand_state.action_states.len(),
+                state.get_valid_actions_mask(),
+            );
+
+            let (proba_tensor, _) = networks[state.get_state_data().player_to_move as usize]
+                .forward(
+                    &card_tensor.unsqueeze(0).unwrap(),
+                    &action_tensor.unsqueeze(0).unwrap(),
+                );
+
+            let valid_actions_mask = state.get_valid_actions_mask();
+            let action_index = Self::choose_action(proba_tensor, state.get_valid_actions_mask());
+
+            if !valid_actions_mask[action_index] {
+                panic!("Invalid action chosen");
+            }
 
             hand_state
                 .action_states
                 .push(Self::build_action_state(state, action_index));
 
-            Tree::traverse_state(
+            Self::traverse_state(
                 traverser,
                 state.get_child(action_index),
                 hand_state,
                 networks,
+                action_config,
             );
         }
     }
@@ -148,5 +154,35 @@ impl<'a> Tree<'a> {
             is_terminal: false,
             street: state.get_state_data().street,
         }
+    }
+
+    fn choose_action(proba_tensor: Tensor, valid_action_mask: Vec<bool>) -> usize {
+        // Apply valid action mask to tensor
+        let mut probas = proba_tensor.squeeze(0).unwrap().to_vec1().unwrap();
+        for i in 0..probas.len() {
+            if i >= valid_action_mask.len() || !valid_action_mask[i] {
+                probas[i] = 0.0;
+            }
+        }
+
+        // Normalize probas
+        let sum: f32 = probas.iter().sum();
+        for p in &mut probas {
+            *p /= sum;
+        }
+
+        // Choose action based on the probability distribution
+        let mut rng = rand::thread_rng();
+        let random_float_0_1: f32 = rng.gen();
+        let mut sum: f32 = 0.0;
+        let mut action_index: usize = 0;
+        for (i, p) in probas.iter().enumerate() {
+            sum += p;
+            if sum > random_float_0_1 {
+                action_index = i;
+                break;
+            }
+        }
+        action_index
     }
 }
