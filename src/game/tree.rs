@@ -1,5 +1,4 @@
 use candle_core::Tensor;
-use poker::card;
 use rand::Rng;
 
 use super::action::ActionConfig;
@@ -42,7 +41,11 @@ impl<'a> Tree<'a> {
         });
     }
 
-    pub fn traverse(&mut self, traverser: u32, networks: &Vec<&PokerNetwork>) {
+    pub fn traverse(
+        &mut self,
+        traverser: u32,
+        networks: &Vec<&PokerNetwork>,
+    ) -> Result<(), candle_core::Error> {
         self.reset(traverser);
 
         Tree::traverse_state(
@@ -51,11 +54,13 @@ impl<'a> Tree<'a> {
             self.hand_state.as_mut().unwrap(),
             networks,
             self.action_config,
-        );
+        )?;
         println!(
             "Action states length: {}",
             self.hand_state.as_ref().unwrap().action_states.len()
         );
+
+        Ok(())
     }
 
     fn traverse_state(
@@ -64,7 +69,7 @@ impl<'a> Tree<'a> {
         hand_state: &mut HandState,
         networks: &Vec<&PokerNetwork>,
         action_config: &ActionConfig,
-    ) {
+    ) -> Result<(), candle_core::Error> {
         // If state is None, panic
         if state_option.is_none() {
             panic!("State is None");
@@ -110,13 +115,10 @@ impl<'a> Tree<'a> {
                 &candle_core::Device::Cpu,
                 hand_state.action_states.len(),
                 state.get_valid_actions_mask(),
-            );
+            )?;
 
             let (proba_tensor, _) = networks[state.get_state_data().player_to_move as usize]
-                .forward(
-                    &card_tensor.unsqueeze(0).unwrap(),
-                    &action_tensor.unsqueeze(0).unwrap(),
-                );
+                .forward(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
 
             let valid_actions_mask = state.get_valid_actions_mask();
             let action_index = Self::choose_action(proba_tensor, state.get_valid_actions_mask());
@@ -137,8 +139,10 @@ impl<'a> Tree<'a> {
                 hand_state,
                 networks,
                 action_config,
-            );
+            )?;
         }
+
+        Ok(())
     }
 
     fn build_action_state(state: &mut Box<dyn State<'a> + 'a>, action_index: usize) -> ActionState {

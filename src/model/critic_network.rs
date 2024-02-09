@@ -1,23 +1,21 @@
 use candle_core::{Module, Tensor};
-use candle_nn::{linear, Linear, VarBuilder};
+use candle_nn::{linear, seq, Activation, Sequential, VarBuilder};
 
 pub struct CriticNetwork {
-    linear_1: Linear,
-    linear_2: Linear,
+    model: Sequential,
 }
 
 impl CriticNetwork {
-    pub fn new(vb: &VarBuilder) -> CriticNetwork {
-        let linear_1 = linear(128, 256, vb.pp("critic_linear_1")).unwrap();
-        let linear_2 = linear(256, 1, vb.pp("critic_linear_2")).unwrap();
-
-        CriticNetwork { linear_1, linear_2 }
+    pub fn new(vb: &VarBuilder) -> Result<CriticNetwork, candle_core::Error> {
+        Ok(CriticNetwork {
+            model: seq()
+                .add(linear(128, 256, vb.pp("critic_linear_1"))?)
+                .add(Activation::Relu)
+                .add(linear(256, 1, vb.pp("critic_linear_2"))?),
+        })
     }
 
-    pub fn forward(&self, x: &Tensor) -> Tensor {
-        let mut x = self.linear_1.forward(x).unwrap();
-        x = x.relu().unwrap();
-        x = self.linear_2.forward(&x).unwrap();
-        x
+    pub fn forward(&self, x: &Tensor) -> Result<Tensor, candle_core::Error> {
+        self.model.forward(x)
     }
 }

@@ -14,11 +14,11 @@ impl SiameseNetwork {
         action_abstraction_count: u32,
         max_action_per_street_cnt: usize,
         vb: &VarBuilder,
-    ) -> SiameseNetwork {
+    ) -> Result<SiameseNetwork, candle_core::Error> {
         // Define card convolution layer
         // Card input shape: 5 channels for hole cards, 3 streets, all cards
         // 52 cards: 13 ranks, 4 suits
-        let card_conv = conv2d(5, 5 * 8, 3, Conv2dConfig::default(), vb.pp("card_conv_1")).unwrap();
+        let card_conv = conv2d(5, 5 * 8, 3, Conv2dConfig::default(), vb.pp("card_conv_1"))?;
 
         // Define action convolution layer
         // Action input shape: 4 streets with max_action_per_street_cnt actions each
@@ -30,8 +30,7 @@ impl SiameseNetwork {
             3,
             Conv2dConfig::default(),
             vb.pp("action_conv_1"),
-        )
-        .unwrap();
+        )?;
 
         // Calculate output shapes
         let card_conv_out_size =
@@ -48,36 +47,39 @@ impl SiameseNetwork {
             card_conv_out_size + action_conv_out_size,
             256,
             vb.pp("merged"),
-        )
-        .unwrap();
+        )?;
 
-        let output_layer = linear(256, 128, vb.pp("output_layer")).unwrap();
+        let output_layer = linear(256, 128, vb.pp("output_layer"))?;
 
-        SiameseNetwork {
+        Ok(SiameseNetwork {
             card_conv,
             action_conv,
             merge_layer,
             output_layer,
-        }
+        })
     }
 
-    pub fn forward(&self, card_tensor: &Tensor, action_tensor: &Tensor) -> Tensor {
-        let card_output = self.card_conv.forward(card_tensor).unwrap();
+    pub fn forward(
+        &self,
+        card_tensor: &Tensor,
+        action_tensor: &Tensor,
+    ) -> Result<Tensor, candle_core::Error> {
+        let card_output = self.card_conv.forward(card_tensor)?;
 
         // Print card_output dims
         // for dim in card_output.shape().dims() {
         //     println!("Card output dim: {}", dim);
         // }
 
-        let action_output = self.action_conv.forward(action_tensor).unwrap();
+        let action_output = self.action_conv.forward(action_tensor)?;
 
         // Print action_output dims
         // for dim in action_output.shape().dims() {
         //     println!("Action output dim: {}", dim);
         // }
 
-        let card_output_flat = card_output.flatten(1, 3).unwrap();
-        let action_output_flat = action_output.flatten(1, 3).unwrap();
+        let card_output_flat = card_output.flatten(1, 3)?;
+        let action_output_flat = action_output.flatten(1, 3)?;
 
         // println!(
         //     "card_output_flat dims: {:?}",
@@ -88,19 +90,13 @@ impl SiameseNetwork {
         //     action_output_flat.shape().dims()
         // );
 
-        let merged = Tensor::cat(&[&card_output_flat, &action_output_flat], 1).unwrap();
+        let merged = Tensor::cat(&[&card_output_flat, &action_output_flat], 1)?;
 
         // println!("merged dims: {:?}", merged.shape().dims());
 
-        let merged_output = self.merge_layer.forward(&merged).unwrap();
-        let res = self.output_layer.forward(&merged_output).unwrap();
+        let merged_output = self.merge_layer.forward(&merged)?;
 
-        // Print res dims
-        // for dim in res.shape().dims() {
-        //     println!("Res dim: {}", dim);
-        // }
-
-        res
+        self.output_layer.forward(&merged_output)
     }
 
     fn calc_cnn_size(input_size: usize, kernel_size: usize, stride: usize) -> usize {

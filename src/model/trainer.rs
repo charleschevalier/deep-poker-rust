@@ -3,12 +3,11 @@ use std::vec;
 use super::poker_network::PokerNetwork;
 use super::trainer_config::TrainerConfig;
 use crate::game::action::ActionConfig;
-use crate::game::hand_state::{self, HandState};
+use crate::game::hand_state::HandState;
 use crate::game::tree::Tree;
-use candle_core::{DType, Device, Tensor};
+use candle_core::{Device, Tensor};
 
-use rand::seq::{index, SliceRandom};
-use rand::{thread_rng, Error};
+use candle_nn::Optimizer;
 
 pub struct Trainer<'a> {
     player_cnt: u32,
@@ -39,12 +38,19 @@ impl<'a> Trainer<'a> {
         let gae_lamda = 0.95;
         let reward_gamma = 0.999;
 
-        let mut trained_network = PokerNetwork::new(
+        let trained_network = PokerNetwork::new(
             self.player_cnt,
             self.action_config,
             self.device.clone(),
             true,
-        );
+        )?;
+
+        // We split the optimizers just like here:
+        // https://github.com/facebookresearch/drqv2/blob/c0c650b76c6e5d22a7eb5f2edffd1440fe94f8ef/drqv2.py#L198
+        let mut optimizer_actor =
+            candle_nn::AdamW::new_lr(trained_network.var_map_actor.all_vars(), 3e-4)?;
+        let mut optimizer_encoder_critic =
+            candle_nn::AdamW::new_lr(trained_network.var_map_critic_encoder.all_vars(), 3e-4)?;
 
         for _ in 0..self.trainer_config.max_iters {
             let mut hand_states = Vec::new();
@@ -52,7 +58,7 @@ impl<'a> Trainer<'a> {
             for _ in 0..self.trainer_config.hands_per_player_per_iteration {
                 for player in 0..self.player_cnt {
                     // TODO: select networks to use here
-                    self.tree.traverse(player, &vec![&trained_network; 3]);
+                    self.tree.traverse(player, &vec![&trained_network; 3])?;
 
                     // Make sure the hand state has at least one state for the traverser
                     let hs = self.tree.hand_state.clone();
@@ -88,7 +94,7 @@ impl<'a> Trainer<'a> {
 
             for hand_state in hand_states.iter() {
                 let (card_tensors, action_tensors) =
-                    hand_state.get_all_tensors(self.action_config, &self.device);
+                    hand_state.get_all_tensors(self.action_config, &self.device)?;
 
                 card_input_vec.push(card_tensors);
                 action_input_vec.push(action_tensors);
@@ -105,7 +111,7 @@ impl<'a> Trainer<'a> {
 
             // Run all states through network
             let (base_actor_outputs, _) =
-                trained_network.forward(&card_input_tensor, &action_input_tensor);
+                trained_network.forward(&card_input_tensor, &action_input_tensor)?;
 
             // Get action probabilities for actions taken by the agent
             let old_probs_raw: Vec<Vec<f32>> = base_actor_outputs.to_vec2()?;
@@ -118,7 +124,7 @@ impl<'a> Trainer<'a> {
             for _ in 0..self.trainer_config.update_step {
                 // Run all states through network
                 let (actor_outputs, critic_outputs) =
-                    trained_network.forward(&card_input_tensor, &action_input_tensor);
+                    trained_network.forward(&card_input_tensor, &action_input_tensor)?;
 
                 let probs_raw: Vec<Vec<f32>> = actor_outputs.to_vec2()?;
                 let probs = self.get_action_probs(&hand_states, &probs_raw, &indexes);
@@ -154,15 +160,16 @@ impl<'a> Trainer<'a> {
                     &old_probs_tensor,
                 );
 
-                println!("Policy loss: {:?}", policy_loss?.to_scalar::<f32>());
-
                 let value_loss = self.get_trinal_clip_value_loss(
                     critic_outputs.as_ref().unwrap(),
                     &rewards_flat_tensor,
                 );
 
-                println!("Value loss: {:?}", value_loss?.to_scalar::<f32>());
-                println!("TOTO");
+                optimizer_actor.backward_step(&policy_loss?)?;
+                optimizer_encoder_critic.backward_step(&value_loss?)?;
+
+                // println!("Policy loss: {:?}", policy_loss?.to_scalar::<f32>());
+                // println!("Value loss: {:?}", value_loss?.to_scalar::<f32>());
             }
         }
 

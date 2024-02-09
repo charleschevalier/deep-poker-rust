@@ -13,77 +13,31 @@ pub struct HandState {
 }
 
 impl HandState {
-    pub fn get_next_state_index(&self, state_index: usize) -> Option<usize> {
-        for i in state_index + 1..self.action_states.len() {
-            if self.action_states[i].player_to_move == self.traverser {
-                return Some(state_index);
-            }
-        }
-        None
-    }
-
     pub fn get_all_tensors(
         &self,
         action_config: &ActionConfig,
         device: &candle_core::Device,
-    ) -> (Tensor, Tensor) {
+    ) -> Result<(Tensor, Tensor), candle_core::Error> {
         // Iterate on states for traverser
         let mut card_tensors: Vec<Tensor> = Vec::new();
         let mut action_tensors: Vec<Tensor> = Vec::new();
 
         for i in 0..self.action_states.len() {
             if self.action_states[i].player_to_move == self.traverser {
-                let (card_tensor, action_tensor) =
-                    self.action_state_to_input(i, action_config, device);
-                card_tensors.push(card_tensor);
-                action_tensors.push(action_tensor);
+                match self.action_state_to_input(i, action_config, device) {
+                    Ok((card_tensor, action_tensor)) => {
+                        card_tensors.push(card_tensor);
+                        action_tensors.push(action_tensor);
+                    }
+                    Err(err) => return Err(err),
+                }
             }
         }
 
-        let out1 = Tensor::stack(&card_tensors, 0).unwrap();
-
-        (
-            Tensor::stack(&card_tensors, 0).unwrap(),
-            Tensor::stack(&action_tensors, 0).unwrap(),
-        )
-    }
-
-    pub fn get_tensors(
-        &self,
-        action_state_index: usize,
-        action_config: &ActionConfig,
-        device: &candle_core::Device,
-    ) -> (Tensor, Tensor, Tensor, Tensor, bool) {
-        let (card_tensor, action_tensor) =
-            self.action_state_to_input(action_state_index, action_config, device);
-        let next_state_index = self.get_next_state_index(action_state_index);
-        let (next_card_tensor, next_action_tensor) = match next_state_index {
-            Some(index) => self.action_state_to_input(index, action_config, device),
-            None => (
-                {
-                    let card_vecs: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 4]; 5];
-                    Tensor::new(card_vecs, device).unwrap()
-                },
-                {
-                    let action_vecs: Vec<Vec<Vec<f32>>> =
-                        vec![
-                            vec![
-                                vec![0.0; 3 + action_config.postflop_raise_sizes.len()];
-                                action_config.player_count as usize + 2
-                            ];
-                            4 * action_config.max_actions_per_street as usize
-                        ];
-                    Tensor::new(action_vecs, device).unwrap()
-                },
-            ),
-        };
-        (
-            card_tensor,
-            action_tensor,
-            next_card_tensor,
-            next_action_tensor,
-            next_state_index.is_none(),
-        )
+        Ok((
+            Tensor::stack(&card_tensors, 0)?,
+            Tensor::stack(&action_tensors, 0)?,
+        ))
     }
 
     pub fn to_input(
@@ -93,7 +47,7 @@ impl HandState {
         device: &candle_core::Device,
         current_state_index: usize,
         valid_actions_mask: Vec<bool>,
-    ) -> (Tensor, Tensor) {
+    ) -> Result<(Tensor, Tensor), candle_core::Error> {
         // Create card tensor
         // Shape is (street_cnt + 1 for all cards) x number_of_suits x number_of_ranks
         let mut card_vecs: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 4]; 5];
@@ -199,10 +153,10 @@ impl HandState {
         //     println!();
         // }
 
-        (
-            Tensor::new(card_vecs, device).unwrap(),
-            Tensor::new(action_vecs, device).unwrap(),
-        )
+        Ok((
+            Tensor::new(card_vecs, device)?,
+            Tensor::new(action_vecs, device)?,
+        ))
     }
 
     fn action_state_to_input(
@@ -210,7 +164,7 @@ impl HandState {
         action_state_index: usize,
         action_config: &ActionConfig,
         device: &candle_core::Device,
-    ) -> (Tensor, Tensor) {
+    ) -> Result<(Tensor, Tensor), candle_core::Error> {
         let action_state = &self.action_states[action_state_index];
 
         self.to_input(
