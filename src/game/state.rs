@@ -101,10 +101,6 @@ pub trait State<'a> {
         self.is_player_in(player_index)
     }
 
-    fn is_player_turn(&self, player_index: i32) -> bool {
-        self.get_player_to_move() == player_index
-    }
-
     fn print_actions(&self) {
         println!("---------------------------------");
         for h in self.get_state_data().history.iter() {
@@ -117,6 +113,5 @@ pub trait State<'a> {
     fn get_reward(&mut self, traverser: u32) -> f32;
     fn get_type(&self) -> StateType;
     fn get_child(&mut self, index: usize) -> &mut Option<Box<dyn State<'a> + 'a>>;
-    fn get_child_count(&self) -> usize;
     fn get_valid_actions_mask(&self) -> Vec<bool>;
 }

@@ -45,6 +45,7 @@ impl<'a> Tree<'a> {
         &mut self,
         traverser: u32,
         networks: &Vec<&PokerNetwork>,
+        device: &candle_core::Device,
     ) -> Result<(), candle_core::Error> {
         self.reset(traverser);
 
@@ -54,11 +55,12 @@ impl<'a> Tree<'a> {
             self.hand_state.as_mut().unwrap(),
             networks,
             self.action_config,
+            device,
         )?;
-        println!(
-            "Action states length: {}",
-            self.hand_state.as_ref().unwrap().action_states.len()
-        );
+        // println!(
+        //     "Action states length: {}",
+        //     self.hand_state.as_ref().unwrap().action_states.len()
+        // );
 
         Ok(())
     }
@@ -69,6 +71,7 @@ impl<'a> Tree<'a> {
         hand_state: &mut HandState,
         networks: &Vec<&PokerNetwork>,
         action_config: &ActionConfig,
+        device: &candle_core::Device,
     ) -> Result<(), candle_core::Error> {
         // If state is None, panic
         if state_option.is_none() {
@@ -101,6 +104,7 @@ impl<'a> Tree<'a> {
                 hand_state,
                 networks,
                 action_config,
+                device,
             );
         } else {
             // Traverse next player
@@ -112,16 +116,16 @@ impl<'a> Tree<'a> {
             let (card_tensor, action_tensor) = hand_state.to_input(
                 state.get_state_data().street,
                 action_config,
-                &candle_core::Device::Cpu,
+                device,
                 hand_state.action_states.len(),
-                state.get_valid_actions_mask(),
+                &state.get_valid_actions_mask(),
             )?;
 
             let (proba_tensor, _) = networks[state.get_state_data().player_to_move as usize]
                 .forward(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
 
             let valid_actions_mask = state.get_valid_actions_mask();
-            let action_index = Self::choose_action(proba_tensor, state.get_valid_actions_mask());
+            let action_index = Self::choose_action(proba_tensor, state.get_valid_actions_mask())?;
 
             if !valid_actions_mask[action_index] {
                 panic!("Invalid action chosen");
@@ -139,6 +143,7 @@ impl<'a> Tree<'a> {
                 hand_state,
                 networks,
                 action_config,
+                device,
             )?;
         }
 
@@ -146,6 +151,12 @@ impl<'a> Tree<'a> {
     }
 
     fn build_action_state(state: &mut Box<dyn State<'a> + 'a>, action_index: usize) -> ActionState {
+        let mut max_reward: u32 = 0;
+        for i in 0..state.get_player_count() {
+            if i as i32 != state.get_player_to_move() {
+                max_reward += state.get_state_data().bets[i as usize];
+            }
+        }
         ActionState {
             player_to_move: state.get_player_to_move() as u32,
             reward: 0.0,
@@ -162,12 +173,17 @@ impl<'a> Tree<'a> {
                 .clone(),
             is_terminal: false,
             street: state.get_state_data().street,
+            min_reward: -(state.get_state_data().bets[state.get_player_to_move() as usize] as f32),
+            max_reward: max_reward as f32,
         }
     }
 
-    fn choose_action(proba_tensor: Tensor, valid_action_mask: Vec<bool>) -> usize {
+    fn choose_action(
+        proba_tensor: Tensor,
+        valid_action_mask: Vec<bool>,
+    ) -> Result<usize, candle_core::Error> {
         // Apply valid action mask to tensor
-        let mut probas = proba_tensor.squeeze(0).unwrap().to_vec1().unwrap();
+        let mut probas = proba_tensor.squeeze(0)?.to_vec1()?;
         for i in 0..probas.len() {
             if i >= valid_action_mask.len() || !valid_action_mask[i] {
                 probas[i] = 0.0;
@@ -192,6 +208,6 @@ impl<'a> Tree<'a> {
                 break;
             }
         }
-        action_index
+        Ok(action_index)
     }
 }

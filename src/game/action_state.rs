@@ -9,4 +9,6 @@ pub struct ActionState {
     pub action_taken: Action,
     pub is_terminal: bool,
     pub street: u8,
+    pub min_reward: f32,
+    pub max_reward: f32,
 }

@@ -58,7 +58,8 @@ impl<'a> Trainer<'a> {
             for _ in 0..self.trainer_config.hands_per_player_per_iteration {
                 for player in 0..self.player_cnt {
                     // TODO: select networks to use here
-                    self.tree.traverse(player, &vec![&trained_network; 3])?;
+                    self.tree
+                        .traverse(player, &vec![&trained_network; 3], &self.device)?;
 
                     // Make sure the hand state has at least one state for the traverser
                     let hs = self.tree.hand_state.clone();
@@ -76,10 +77,17 @@ impl<'a> Trainer<'a> {
             let mut rewards_flat: Vec<f32> = Vec::new();
             let mut cnt = 0;
             let mut indexes = Vec::new();
+            let mut min_rewards = Vec::new();
+            let mut max_rewards = Vec::new();
 
             for hand_state in hand_states.iter_mut() {
                 indexes.push(cnt);
                 let hand_rewards = self.get_discounted_rewards(hand_state, reward_gamma);
+
+                for action_state in hand_state.action_states.iter() {
+                    min_rewards.push(action_state.min_reward);
+                    max_rewards.push(action_state.max_reward);
+                }
 
                 cnt += hand_rewards.len();
                 rewards_flat.extend(hand_rewards.iter());
@@ -87,6 +95,8 @@ impl<'a> Trainer<'a> {
             }
 
             let rewards_flat_tensor = Tensor::new(rewards_flat, &self.device)?;
+            let min_rewards_tensor = Tensor::new(min_rewards, &self.device)?;
+            let max_rewards_tensor = Tensor::new(max_rewards, &self.device)?;
 
             // Get network inputs
             let mut card_input_vec = Vec::new();
@@ -100,14 +110,14 @@ impl<'a> Trainer<'a> {
                 action_input_vec.push(action_tensors);
             }
 
-            println!("Card input vec: {:?}", card_input_vec[0].shape());
-            println!("Action input vec: {:?}", action_input_vec[0].shape());
+            // println!("Card input vec: {:?}", card_input_vec[0].shape());
+            // println!("Action input vec: {:?}", action_input_vec[0].shape());
 
             let card_input_tensor = Tensor::cat(&card_input_vec, 0)?;
             let action_input_tensor = Tensor::cat(&action_input_vec, 0)?;
 
-            println!("Card input tensor: {:?}", card_input_tensor.shape());
-            println!("Action input tensor: {:?}", action_input_tensor.shape());
+            // println!("Card input tensor: {:?}", card_input_tensor.shape());
+            // println!("Action input tensor: {:?}", action_input_tensor.shape());
 
             // Run all states through network
             let (base_actor_outputs, _) =
@@ -132,11 +142,11 @@ impl<'a> Trainer<'a> {
                 let critic_outputs_vec: Vec<f32> =
                     critic_outputs.as_ref().unwrap().squeeze(1)?.to_vec1()?;
 
-                println!("actor_outputs: {:?}", actor_outputs.shape());
-                println!(
-                    "critic_outputs: {:?}",
-                    critic_outputs.as_ref().unwrap().shape()
-                );
+                // println!("actor_outputs: {:?}", actor_outputs.shape());
+                // println!(
+                //     "critic_outputs: {:?}",
+                //     critic_outputs.as_ref().unwrap().shape()
+                // );
 
                 // Calculate advantage GAE for each hand state
                 let mut advantage_gae: Vec<f32> = Vec::new();
@@ -163,12 +173,18 @@ impl<'a> Trainer<'a> {
                 let value_loss = self.get_trinal_clip_value_loss(
                     critic_outputs.as_ref().unwrap(),
                     &rewards_flat_tensor,
+                    &min_rewards_tensor,
+                    &max_rewards_tensor,
+                );
+
+                println!(
+                    "Policy loss: {:?}",
+                    policy_loss.as_ref().unwrap().to_scalar::<f32>()
                 );
 
                 optimizer_actor.backward_step(&policy_loss?)?;
                 optimizer_encoder_critic.backward_step(&value_loss?)?;
 
-                // println!("Policy loss: {:?}", policy_loss?.to_scalar::<f32>());
                 // println!("Value loss: {:?}", value_loss?.to_scalar::<f32>());
             }
         }
@@ -266,11 +282,10 @@ impl<'a> Trainer<'a> {
         &self,
         values: &Tensor,
         rewards: &Tensor,
+        max_bet: &Tensor,
+        min_bet: &Tensor,
     ) -> Result<Tensor, candle_core::Error> {
-        let clipped = rewards.clamp(
-            -self.trainer_config.ppo_delta_2,
-            self.trainer_config.ppo_delta_3,
-        )?;
+        let clipped = rewards.minimum(min_bet)?.maximum(max_bet)?;
         let diff = (clipped - values.squeeze(1))?;
         (diff.as_ref() * diff.as_ref())?.mean(0)
     }

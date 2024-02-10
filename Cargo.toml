@@ -3,18 +3,8 @@ name = "deep-poker"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[features]
-default = []
-# This feature will pass the "cuda" feature to candle-core and cuda-nn when passed to cargo
-# For example: 
-# cargo build --features cuda
-# cargo run --features cuda
-cuda = ["candle-core/cuda", "candle-nn/cuda"]
-
 [dependencies]
-candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.4.0" }
-candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.4.0" }
+candle-core = { git = "https://github.com/huggingface/candle.git", version = "0.4.0", features = ["cuda"] }
+candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.4.0", features = ["cuda"] }
 poker = "0.5.0"
 rand = "0.8.5"

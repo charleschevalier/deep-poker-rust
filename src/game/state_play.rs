@@ -20,10 +20,6 @@ impl<'a> State<'a> for StatePlay<'a> {
         &mut self.children[index]
     }
 
-    fn get_child_count(&self) -> usize {
-        self.children.len()
-    }
-
     fn get_valid_actions_mask(&self) -> Vec<bool> {
         self.valid_actions_mask.clone()
     }

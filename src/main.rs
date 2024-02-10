@@ -31,14 +31,14 @@ fn main() {
         max_iters: 100,
         batch_size: 64,
         hands_per_player_per_iteration: 100,
-        update_step: 10,
+        update_step: 100,
         ppo_epsilon: 0.2,
         ppo_delta_1: 3.0,
-        ppo_delta_2: 0.2,
-        ppo_delta_3: 0.2,
     };
 
-    let mut trainer = model::trainer::Trainer::new(3, &action_config, &trainer_config, Device::Cpu);
+    let device = Device::cuda_if_available(0).unwrap();
+
+    let mut trainer = model::trainer::Trainer::new(3, &action_config, &trainer_config, device);
     if let Err(err) = trainer.train() {
         println!("Error: {}", err);
 

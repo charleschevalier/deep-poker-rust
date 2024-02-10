@@ -5,6 +5,4 @@ pub struct TrainerConfig {
     pub update_step: usize,
     pub ppo_epsilon: f32,
     pub ppo_delta_1: f32,
-    pub ppo_delta_2: f32,
-    pub ppo_delta_3: f32,
 }

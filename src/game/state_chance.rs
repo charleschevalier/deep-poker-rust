@@ -19,10 +19,6 @@ impl<'a> State<'a> for StateChance<'a> {
         &mut self.children[index]
     }
 
-    fn get_child_count(&self) -> usize {
-        self.children.len()
-    }
-
     fn get_reward(&mut self, _traverser: u32) -> f32 {
         panic!("Not implemented");
     }

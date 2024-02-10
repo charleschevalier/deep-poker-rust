@@ -18,10 +18,6 @@ impl<'a> State<'a> for StateTerminal {
         panic!("Not implemented");
     }
 
-    fn get_child_count(&self) -> usize {
-        panic!("Not implemented");
-    }
-
     fn create_children(&mut self) {
         panic!("Not implemented");
     }

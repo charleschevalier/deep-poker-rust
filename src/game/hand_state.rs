@@ -46,7 +46,7 @@ impl HandState {
         action_config: &ActionConfig,
         device: &candle_core::Device,
         current_state_index: usize,
-        valid_actions_mask: Vec<bool>,
+        valid_actions_mask: &[bool],
     ) -> Result<(Tensor, Tensor), candle_core::Error> {
         // Create card tensor
         // Shape is (street_cnt + 1 for all cards) x number_of_suits x number_of_ranks
@@ -172,7 +172,7 @@ impl HandState {
             action_config,
             device,
             action_state_index,
-            action_state.valid_actions_mask.clone(),
+            &action_state.valid_actions_mask,
         )
     }
 }
