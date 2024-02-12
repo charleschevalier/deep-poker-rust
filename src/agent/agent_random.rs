@@ -5,7 +5,7 @@ use rand::Rng;
 
 pub struct AgentRandom {}
 
-impl Agent for AgentRandom {
+impl<'a> Agent<'a> for AgentRandom {
     fn choose_action(
         &self,
         _hand_state: &HandState,

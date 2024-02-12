@@ -1,6 +1,6 @@
 use crate::game::hand_state::HandState;
 
-pub trait Agent {
+pub trait Agent<'a> {
     fn choose_action(
         &self,
         hand_state: &HandState,

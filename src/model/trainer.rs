@@ -2,13 +2,15 @@ use std::vec;
 
 use super::poker_network::PokerNetwork;
 use super::trainer_config::TrainerConfig;
-use crate::game::action::ActionConfig;
+use crate::agent::agent_network::AgentNetwork;
+use crate::agent::agent_pool::AgentPool;
 use crate::game::hand_state::HandState;
 use crate::game::tree::Tree;
+use crate::{agent::Agent, game::action::ActionConfig};
 use candle_core::{Device, Tensor};
-use std::path::Path;
-
 use candle_nn::Optimizer;
+
+use std::path::Path;
 
 pub struct Trainer<'a> {
     player_cnt: u32,
@@ -48,6 +50,15 @@ impl<'a> Trainer<'a> {
             self.device.clone(),
             true,
         )?;
+
+        let mut agent_pool = AgentPool::new();
+        let temp_net = PokerNetwork::new(
+            self.player_cnt,
+            self.action_config,
+            self.device.clone(),
+            true,
+        )?;
+        agent_pool.add_agent(Box::new(AgentNetwork::new(temp_net)));
 
         // List files in output path
         let trained_network_path = Path::new(&self.output_path);
@@ -113,9 +124,19 @@ impl<'a> Trainer<'a> {
 
             for _ in 0..self.trainer_config.hands_per_player_per_iteration {
                 for player in 0..self.player_cnt {
-                    // TODO: select networks to use here
+                    let mut agents: Vec<Option<&Box<dyn Agent>>> = Vec::new();
+                    for p in 0..self.player_cnt {
+                        let agent: Option<&Box<dyn Agent<'_>>>;
+                        if p != player {
+                            agent = Some(agent_pool.get_agent());
+                        } else {
+                            agent = None;
+                        }
+                        agents.push(agent);
+                    }
+                    // Select agents
                     self.tree
-                        .traverse(player, &vec![&trained_network; 3], &self.device)?;
+                        .traverse(player, &trained_network, &agents, &self.device)?;
 
                     // Make sure the hand state has at least one state for the traverser
                     let hs = self.tree.hand_state.clone();
@@ -265,6 +286,7 @@ impl<'a> Trainer<'a> {
             }
             self.tree
                 .print_first_actions(&trained_network, &self.device)?;
+
             if iteration > 0 && iteration % 100 == 0 {
                 trained_network.var_map.save(
                     Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration)),
@@ -272,6 +294,15 @@ impl<'a> Trainer<'a> {
                 self.tree
                     .print_first_actions(&trained_network, &self.device)?;
             }
+
+            let mut copy_net = PokerNetwork::new(
+                self.player_cnt,
+                self.action_config,
+                self.device.clone(),
+                true,
+            )?;
+            copy_net.var_map.clone_from(&trained_network.var_map);
+            agent_pool.add_agent(Box::new(AgentNetwork::new(copy_net)));
         }
 
         Ok(())

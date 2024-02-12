@@ -35,7 +35,7 @@ fn main() {
         &action_config,
         &trainer_config,
         device,
-        "/media/charles/CCH_FAST/deep_poker/",
+        "/media/charles/CCH_BIG/deep_poker/",
     );
     if let Err(err) = trainer.train() {
         println!("Error: {}", err);

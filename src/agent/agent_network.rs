@@ -1,14 +1,15 @@
 use super::Agent;
 use crate::game::hand_state::HandState;
 use crate::model::poker_network::PokerNetwork;
+use candle_core::Tensor;
 
 use rand::Rng;
 
-pub struct AgentNetwork<'a> {
-    network: &'a PokerNetwork<'a>,
+pub struct AgentNetwork {
+    network: PokerNetwork,
 }
 
-impl<'a> Agent for AgentNetwork<'a> {
+impl<'a> Agent<'a> for AgentNetwork {
     fn choose_action(
         &self,
         hand_state: &HandState,
@@ -29,6 +30,22 @@ impl<'a> Agent for AgentNetwork<'a> {
             .network
             .forward(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
 
+        Ok(Self::choose_action_from_net(
+            &proba_tensor,
+            valid_action_mask,
+        )?)
+    }
+}
+
+impl<'a> AgentNetwork {
+    pub fn new(network: PokerNetwork) -> AgentNetwork {
+        AgentNetwork { network }
+    }
+
+    pub fn choose_action_from_net(
+        proba_tensor: &Tensor,
+        valid_action_mask: &[bool],
+    ) -> Result<usize, Box<dyn std::error::Error>> {
         // Apply valid action mask to tensor
         let mut probas = proba_tensor.squeeze(0)?.to_vec1()?;
         for i in 0..probas.len() {

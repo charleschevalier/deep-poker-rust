@@ -6,7 +6,8 @@ use super::hand_state::HandState;
 use super::state::{State, StateType};
 use super::state_chance::StateChance;
 use super::state_data::StateData;
-use crate::agent::{self, Agent};
+use crate::agent::agent_network::AgentNetwork;
+use crate::agent::Agent;
 use crate::model::poker_network::PokerNetwork;
 use colored::*;
 
@@ -45,7 +46,8 @@ impl<'a> Tree<'a> {
     pub fn traverse(
         &mut self,
         traverser: u32,
-        agents: &Vec<&Box<dyn Agent>>,
+        network: &PokerNetwork,
+        agents: &Vec<Option<&Box<dyn Agent>>>,
         device: &candle_core::Device,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.reset(traverser);
@@ -54,6 +56,7 @@ impl<'a> Tree<'a> {
             traverser,
             &mut self.root,
             self.hand_state.as_mut().unwrap(),
+            network,
             agents,
             self.action_config,
             device,
@@ -70,7 +73,8 @@ impl<'a> Tree<'a> {
         traverser: u32,
         state_option: &mut Option<Box<dyn State<'a> + 'a>>,
         hand_state: &mut HandState,
-        agents: &Vec<&Box<dyn Agent>>,
+        network: &PokerNetwork,
+        agents: &Vec<Option<&Box<dyn Agent>>>,
         action_config: &ActionConfig,
         device: &candle_core::Device,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -106,6 +110,7 @@ impl<'a> Tree<'a> {
                 traverser,
                 state.get_child(0),
                 hand_state,
+                network,
                 agents,
                 action_config,
                 device,
@@ -117,23 +122,33 @@ impl<'a> Tree<'a> {
 
             state.create_children();
 
-            let (card_tensor, action_tensor) = hand_state.to_input(
-                state.get_state_data().street,
-                action_config,
-                device,
-                hand_state.action_states.len(),
-                &state.get_valid_actions_mask(),
-            )?;
-
             let valid_actions_mask = state.get_valid_actions_mask();
 
-            let action_index = agents[state.get_player_to_move() as usize].choose_action(
-                &hand_state,
-                &valid_actions_mask,
-                state.get_state_data().street,
-                action_config,
-                device,
-            )?;
+            let action_index = if traverser == state.get_player_to_move() as u32 {
+                let (card_tensor, action_tensor) = hand_state.to_input(
+                    state.get_state_data().street,
+                    action_config,
+                    device,
+                    hand_state.action_states.len(),
+                    &valid_actions_mask,
+                )?;
+
+                let (proba_tensor, _) =
+                    network.forward(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
+
+                let valid_actions_mask = state.get_valid_actions_mask();
+                AgentNetwork::choose_action_from_net(&proba_tensor, &valid_actions_mask)?
+            } else {
+                agents[state.get_player_to_move() as usize]
+                    .unwrap()
+                    .choose_action(
+                        &hand_state,
+                        &valid_actions_mask,
+                        state.get_state_data().street,
+                        action_config,
+                        device,
+                    )?
+            };
 
             if !valid_actions_mask[action_index] {
                 panic!("Invalid action chosen");
@@ -151,6 +166,7 @@ impl<'a> Tree<'a> {
                 traverser,
                 state.get_child(action_index),
                 hand_state,
+                network,
                 agents,
                 action_config,
                 device,
@@ -163,7 +179,7 @@ impl<'a> Tree<'a> {
     fn build_action_state(
         state: &mut Box<dyn State<'a> + 'a>,
         action_index: usize,
-        action_config: &ActionConfig,
+        _action_config: &ActionConfig,
     ) -> ActionState {
         let mut max_reward: u32 = 0;
         for i in 0..state.get_player_count() {

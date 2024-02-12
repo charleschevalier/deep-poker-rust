@@ -18,14 +18,14 @@ impl SiameseNetwork {
         // Calculate output shapes
         let card_conv_out_size =
             5 * 8 * Self::calc_cnn_size(13, 3, 1) * Self::calc_cnn_size(4, 3, 1);
-        println!("Card conv out size: {}", card_conv_out_size);
+        // println!("Card conv out size: {}", card_conv_out_size);
 
         let action_conv_out_size = max_action_per_street_cnt
             * 4
             * 8
             * Self::calc_cnn_size(action_abstraction_count as usize, 3, 1)
             * Self::calc_cnn_size(player_count as usize + 2, 3, 1);
-        println!("Action conv out size: {}", action_conv_out_size);
+        // println!("Action conv out size: {}", action_conv_out_size);
 
         // Define layers dimensions
         let weight_dims: Vec<Vec<usize>> = vec![

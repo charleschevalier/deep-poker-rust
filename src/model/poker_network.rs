@@ -5,15 +5,14 @@ use crate::game::action::ActionConfig;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::{VarBuilder, VarMap};
 
-pub struct PokerNetwork<'a> {
+pub struct PokerNetwork {
     siamese_network: SiameseNetwork,
     actor_network: ActorNetwork,
     critic_network: Option<CriticNetwork>,
     pub var_map: VarMap,
-    pub var_builder: VarBuilder<'a>,
 }
 
-impl<'a> PokerNetwork<'a> {
+impl PokerNetwork {
     pub fn new(
         player_count: u32,
         action_config: &ActionConfig,
@@ -43,7 +42,6 @@ impl<'a> PokerNetwork<'a> {
             actor_network,
             critic_network,
             var_map,
-            var_builder: vb,
         })
     }
 
@@ -62,10 +60,4 @@ impl<'a> PokerNetwork<'a> {
             Ok((actor_output, None))
         }
     }
-
-    // pub fn get_policy_vars(&self) -> Vec<&candle_core::Var> {
-    //     let mut result: Vec<&candle_core::Var> = Vec::new();
-    //     result.append(self.actor_network.get_weights(self.var_builder)?);
-    //     self.actor_network.get_vars()
-    // }
 }
