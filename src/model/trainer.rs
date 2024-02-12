@@ -6,6 +6,7 @@ use crate::game::action::ActionConfig;
 use crate::game::hand_state::HandState;
 use crate::game::tree::Tree;
 use candle_core::{Device, Tensor};
+use std::path::Path;
 
 use candle_nn::Optimizer;
 
@@ -15,6 +16,7 @@ pub struct Trainer<'a> {
     trainer_config: &'a TrainerConfig,
     tree: Tree<'a>,
     device: Device,
+    output_path: &'a str,
 }
 
 impl<'a> Trainer<'a> {
@@ -23,6 +25,7 @@ impl<'a> Trainer<'a> {
         action_config: &'a ActionConfig,
         trainer_config: &'a TrainerConfig,
         device: Device,
+        output_path: &'a str,
     ) -> Trainer<'a> {
         Trainer {
             player_cnt,
@@ -30,29 +33,82 @@ impl<'a> Trainer<'a> {
             trainer_config,
             tree: Tree::new(player_cnt, action_config),
             device,
+            output_path,
         }
     }
 
-    pub fn train(&mut self) -> Result<(), candle_core::Error> {
+    pub fn train(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let gae_gamma = 0.99;
         let gae_lamda = 0.95;
         let reward_gamma = 0.999;
 
-        let trained_network = PokerNetwork::new(
+        let mut trained_network = PokerNetwork::new(
             self.player_cnt,
             self.action_config,
             self.device.clone(),
             true,
         )?;
 
+        // List files in output path
+        let trained_network_path = Path::new(&self.output_path);
+        let trained_network_files = trained_network_path.read_dir()?;
+        let mut latest_iteration = 0;
+
+        for file in trained_network_files {
+            let file = file?;
+            let file_name = file.file_name();
+            let file_name = file_name.to_str().unwrap();
+            let file_name = file_name.split('_').collect::<Vec<&str>>();
+
+            if file_name.len() > 2 {
+                let iteration = file_name[2].split('.').collect::<Vec<&str>>()[0].parse::<u32>()?;
+                if iteration > latest_iteration {
+                    latest_iteration = iteration;
+                }
+            }
+        }
+
+        if latest_iteration > 0 {
+            trained_network.var_map.load(
+                trained_network_path.join(format!("poker_network_{}.pt", latest_iteration)),
+            )?;
+        }
+
+        let mut policy_data = Vec::new();
+        let mut critic_data = Vec::new();
+
+        {
+            let var_data = trained_network.var_map.data().lock().unwrap();
+            var_data.iter().for_each(|(k, v)| {
+                println!("Key: {}", k);
+                if k.starts_with("siamese") {
+                    policy_data.push(v.clone());
+                    critic_data.push(v.clone());
+                }
+                if k.starts_with("actor") {
+                    policy_data.push(v.clone());
+                }
+                if k.starts_with("critic") {
+                    critic_data.push(v.clone());
+                }
+            });
+        }
+
+        let mut optimizer_policy = candle_nn::AdamW::new_lr(policy_data, 3e-4)?;
+        let mut optimizer_critic = candle_nn::AdamW::new_lr(critic_data, 3e-4)?;
+
         // We split the optimizers just like here:
         // https://github.com/facebookresearch/drqv2/blob/c0c650b76c6e5d22a7eb5f2edffd1440fe94f8ef/drqv2.py#L198
-        let mut optimizer_actor =
-            candle_nn::AdamW::new_lr(trained_network.var_map_actor.all_vars(), 3e-4)?;
-        let mut optimizer_encoder_critic =
-            candle_nn::AdamW::new_lr(trained_network.var_map_critic_encoder.all_vars(), 3e-4)?;
+        // let all_vars = trained_network.var_map.all_vars();
 
-        for _ in 0..self.trainer_config.max_iters {
+        // let mut optimizer_actor =
+        //     candle_nn::AdamW::new_lr(trained_network.var_map.all_vars(), 3e-4)?;
+        // let mut optimizer_encoder_critic =
+        //     candle_nn::AdamW::new_lr(trained_network.var_map_critic_encoder.all_vars(), 3e-4)?;
+
+        for iteration in (latest_iteration as usize + 1)..self.trainer_config.max_iters {
+            println!("Iteration: {}", iteration);
+
             let mut hand_states = Vec::new();
 
             for _ in 0..self.trainer_config.hands_per_player_per_iteration {
@@ -69,6 +125,11 @@ impl<'a> Trainer<'a> {
                         }
                         hand_states.push(hs);
                     }
+
+                    // // Print progress
+                    // if hand_states.len() % 100 == 0 {
+                    //     println!("Hand states: {}", hand_states.len());
+                    // }
                 }
             }
 
@@ -131,7 +192,7 @@ impl<'a> Trainer<'a> {
             )?
             .log()?;
 
-            for _ in 0..self.trainer_config.update_step {
+            for _update_step in 0..self.trainer_config.update_step {
                 // Run all states through network
                 let (actor_outputs, critic_outputs) =
                     trained_network.forward(&card_input_tensor, &action_input_tensor)?;
@@ -161,6 +222,18 @@ impl<'a> Trainer<'a> {
                     advantage_gae.append(&mut advantage);
                 }
 
+                // Normalize and return advantage_gae
+                let mean = advantage_gae.iter().sum::<f32>() / advantage_gae.len() as f32;
+                let variance = advantage_gae
+                    .iter()
+                    .map(|x| (x - mean).powf(2.0))
+                    .sum::<f32>()
+                    / advantage_gae.len() as f32;
+                let std_dev = variance.sqrt();
+                for x in advantage_gae.iter_mut() {
+                    *x = (*x - mean) / std_dev;
+                }
+
                 let advantage_tensor = Tensor::new(advantage_gae, &self.device)?;
 
                 // Get trinal clip PPO
@@ -177,15 +250,27 @@ impl<'a> Trainer<'a> {
                     &max_rewards_tensor,
                 );
 
+                // println!("Update step: {}", update_step);
                 println!(
                     "Policy loss: {:?}",
                     policy_loss.as_ref().unwrap().to_scalar::<f32>()
                 );
+                println!(
+                    "Value loss: {:?}",
+                    value_loss.as_ref().unwrap().to_scalar::<f32>()
+                );
 
-                optimizer_actor.backward_step(&policy_loss?)?;
-                optimizer_encoder_critic.backward_step(&value_loss?)?;
-
-                // println!("Value loss: {:?}", value_loss?.to_scalar::<f32>());
+                optimizer_policy.backward_step(&policy_loss?)?;
+                optimizer_critic.backward_step(&value_loss?)?;
+            }
+            self.tree
+                .print_first_actions(&trained_network, &self.device)?;
+            if iteration > 0 && iteration % 100 == 0 {
+                trained_network.var_map.save(
+                    Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration)),
+                )?;
+                self.tree
+                    .print_first_actions(&trained_network, &self.device)?;
             }
         }
 

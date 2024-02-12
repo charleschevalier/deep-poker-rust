@@ -5,6 +5,7 @@ use candle_core::Device;
 use model::trainer_config::TrainerConfig;
 use std::backtrace::Backtrace;
 
+mod agent;
 mod game;
 mod model;
 
@@ -19,26 +20,23 @@ fn main() {
     //     tree.traverse(i);
     // }
 
-    /*pub struct TrainerConfig {
-        pub max_iters: usize,
-        pub batch_size: usize,
-        pub hands_per_player_per_iteration: usize,
-        pub update_step: usize,
-    }
-     */
-
     let trainer_config = TrainerConfig {
-        max_iters: 100,
-        batch_size: 64,
-        hands_per_player_per_iteration: 100,
-        update_step: 100,
+        max_iters: 500000,
+        hands_per_player_per_iteration: 1000,
+        update_step: 10,
         ppo_epsilon: 0.2,
         ppo_delta_1: 3.0,
     };
 
     let device = Device::cuda_if_available(0).unwrap();
 
-    let mut trainer = model::trainer::Trainer::new(3, &action_config, &trainer_config, device);
+    let mut trainer = model::trainer::Trainer::new(
+        3,
+        &action_config,
+        &trainer_config,
+        device,
+        "/media/charles/CCH_FAST/deep_poker/",
+    );
     if let Err(err) = trainer.train() {
         println!("Error: {}", err);
 

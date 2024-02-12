@@ -6,16 +6,29 @@ pub struct ActorNetwork {
 }
 
 impl ActorNetwork {
-    pub fn new(vb: &VarBuilder, action_count: usize) -> Result<ActorNetwork, candle_core::Error> {
+    pub fn new(
+        vb: &VarBuilder,
+        action_count: usize,
+    ) -> Result<ActorNetwork, Box<dyn std::error::Error>> {
+        let weight_dims: Vec<Vec<usize>> = vec![vec![256, 256], vec![action_count, 256]];
+
         Ok(ActorNetwork {
             model: seq()
-                .add(linear(128, 256, vb.pp("actor_linear_1"))?)
+                .add(linear(
+                    weight_dims[0][1],
+                    weight_dims[0][0],
+                    vb.pp("actor_linear_1"),
+                )?)
                 .add(Activation::Relu)
-                .add(linear(256, action_count, vb.pp("actor_linear_2"))?),
+                .add(linear(
+                    weight_dims[1][1],
+                    weight_dims[1][0],
+                    vb.pp("actor_linear_2"),
+                )?),
         })
     }
 
-    pub fn forward(&self, x: &Tensor) -> Result<Tensor, candle_core::Error> {
+    pub fn forward(&self, x: &Tensor) -> Result<Tensor, Box<dyn std::error::Error>> {
         let mut x = self.model.forward(x)?;
         x = candle_nn::ops::softmax(&x, candle_core::D::Minus1)?;
         Ok(x)
