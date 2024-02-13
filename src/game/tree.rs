@@ -151,7 +151,17 @@ impl<'a> Tree<'a> {
             };
 
             if !valid_actions_mask[action_index] {
-                panic!("Invalid action chosen");
+                if state.get_player_to_move() == traverser as i32 {
+                    hand_state.action_states.push(Self::build_action_state(
+                        state,
+                        action_index,
+                        action_config,
+                    ));
+                    let last_state = hand_state.action_states.last_mut().unwrap();
+                    last_state.reward = -(action_config.buy_in as f32);
+                    last_state.is_terminal = true;
+                }
+                return Ok(());
             }
 
             if state.get_player_to_move() == traverser as i32 {

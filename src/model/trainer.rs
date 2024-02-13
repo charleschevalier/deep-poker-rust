@@ -391,7 +391,7 @@ impl<'a> Trainer<'a> {
         let final_clip = neg.where_cond(&clip2, &clip1)?;
 
         let policy_loss = final_clip * advantages;
-        policy_loss?.mean(0)?.neg()
+        policy_loss?.mean(0)
     }
 
     fn get_trinal_clip_value_loss(
