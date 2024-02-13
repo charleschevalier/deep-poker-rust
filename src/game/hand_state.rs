@@ -1,5 +1,4 @@
 use super::action::ActionConfig;
-use super::action::ActionType;
 use super::action_state::ActionState;
 use candle_core::Tensor;
 use poker::Card;
@@ -22,8 +21,15 @@ impl HandState {
         let mut card_tensors: Vec<Tensor> = Vec::new();
         let mut action_tensors: Vec<Tensor> = Vec::new();
 
+        // In case the last action is an invalid action, we only take the last action
+        // (see get_traverser_action_states for more details)
+        let last = self.action_states.last();
+        let is_invalid = last.is_some() && last.unwrap().is_invalid;
+
         for i in 0..self.action_states.len() {
-            if self.action_states[i].player_to_move == self.traverser {
+            if self.action_states[i].player_to_move == self.traverser
+                && (!is_invalid || i == self.action_states.len() - 1)
+            {
                 match self.action_state_to_input(i, action_config, device) {
                     Ok((card_tensor, action_tensor)) => {
                         card_tensors.push(card_tensor);
@@ -46,7 +52,6 @@ impl HandState {
         action_config: &ActionConfig,
         device: &candle_core::Device,
         current_state_index: usize,
-        valid_actions_mask: &[bool],
     ) -> Result<(Tensor, Tensor), Box<dyn std::error::Error>> {
         // Create card tensor
         // Shape is (street_cnt + 1 for all cards) x number_of_suits x number_of_ranks
@@ -82,6 +87,8 @@ impl HandState {
         }
 
         // Print card_vecs as matrix
+        // println!("-------------------");
+
         // for i in 0..5 {
         //     for j in 0..4 {
         //         for k in 0..13 {
@@ -113,24 +120,18 @@ impl HandState {
                 action_cnt = 0;
             }
 
-            let action_index = match action_state_it.action_taken.action_type {
-                ActionType::Fold => 0,
-                ActionType::Call => 1,
-                ActionType::Raise => 2 + action_state_it.action_taken.raise_index as usize,
-                ActionType::AllIn => 2 + action_config.postflop_raise_sizes.len(),
-                _ => 0,
-            };
-
             // Set player action in tensor
             action_vecs[current_street as usize * action_config.max_actions_per_street as usize
-                + action_cnt][action_state_it.player_to_move as usize][action_index] = 1.0;
+                + action_cnt][action_state_it.player_to_move as usize]
+                [action_state_it.action_taken_index] = 1.0;
 
             // Increment sum of actions
             action_vecs[current_street as usize * action_config.max_actions_per_street as usize
-                + action_cnt][action_config.player_count as usize][action_index] += 1.0;
+                + action_cnt][action_config.player_count as usize]
+                [action_state_it.action_taken_index] += 1.0;
 
             // Set legal actions
-            for (i, valid) in valid_actions_mask.iter().enumerate() {
+            for (i, valid) in action_state_it.valid_actions_mask.iter().enumerate() {
                 if *valid {
                     action_vecs[current_street as usize
                         * action_config.max_actions_per_street as usize
@@ -143,6 +144,17 @@ impl HandState {
         }
 
         // Print action_vecs as matrix
+        // if self.action_states.len() > 2 {
+        //     for i in 0..4 * action_config.max_actions_per_street as usize {
+        //         for j in 0..action_config.player_count as usize + 2 {
+        //             for k in 0..3 + action_config.postflop_raise_sizes.len() {
+        //                 print!("{}", action_vecs[i][j][k]);
+        //             }
+        //             println!();
+        //         }
+        //         println!();
+        //     }
+        // }
         // for i in 0..4 * action_config.max_actions_per_street as usize {
         //     for j in 0..action_config.player_count as usize + 2 {
         //         for k in 0..3 + action_config.postflop_raise_sizes.len() {
@@ -172,7 +184,23 @@ impl HandState {
             action_config,
             device,
             action_state_index,
-            &action_state.valid_actions_mask,
         )
+    }
+
+    pub fn get_traverser_action_states(&self) -> Vec<&ActionState> {
+        let result: Vec<&ActionState> = self
+            .action_states
+            .iter()
+            .filter(|action_state| action_state.player_to_move == self.traverser)
+            .collect();
+        // Get last element
+        let last = result.last();
+        if last.is_some() && last.unwrap().is_invalid {
+            // Take only last element so the network learns the invalid action but does not
+            // propagate wrong rewards on potentially correct actions before that
+            result.into_iter().rev().take(1).collect()
+        } else {
+            result
+        }
     }
 }

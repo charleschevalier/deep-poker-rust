@@ -37,7 +37,12 @@ pub trait State<'a> {
         let mut i = (self.get_player_to_move() + 1) % self.get_player_count() as i32;
         let last_to_move_temp = (last_to_move_temp + 1) % self.get_player_count() as i32;
         while i != last_to_move_temp {
-            if self.is_player_in(i as u32) {
+            if self.is_player_in(i as u32)
+                && !matches!(
+                    self.get_last_actions()[i as usize].action_type,
+                    ActionType::AllIn
+                )
+            {
                 return i;
             }
             i = (i + 1) % self.get_player_count() as i32;
@@ -50,7 +55,12 @@ pub trait State<'a> {
         let mut last: i32 = -1;
         let mut i = (player_that_raised + 1) % self.get_player_count() as i32;
         while i != player_that_raised {
-            if self.is_player_in(i as u32) {
+            if self.is_player_in(i as u32)
+                && !matches!(
+                    self.get_last_actions()[i as usize].action_type,
+                    ActionType::AllIn
+                )
+            {
                 last = i;
             }
             i = (i + 1) % self.get_player_count() as i32;

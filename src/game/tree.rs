@@ -47,7 +47,7 @@ impl<'a> Tree<'a> {
         &mut self,
         traverser: u32,
         network: &PokerNetwork,
-        agents: &Vec<Option<&Box<dyn Agent>>>,
+        agents: &Vec<Option<&dyn Agent>>,
         device: &candle_core::Device,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.reset(traverser);
@@ -74,7 +74,7 @@ impl<'a> Tree<'a> {
         state_option: &mut Option<Box<dyn State<'a> + 'a>>,
         hand_state: &mut HandState,
         network: &PokerNetwork,
-        agents: &Vec<Option<&Box<dyn Agent>>>,
+        agents: &Vec<Option<&dyn Agent>>,
         action_config: &ActionConfig,
         device: &candle_core::Device,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -130,16 +130,16 @@ impl<'a> Tree<'a> {
                     action_config,
                     device,
                     hand_state.action_states.len(),
-                    &valid_actions_mask,
                 )?;
 
                 let (proba_tensor, _) =
                     network.forward(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
 
                 let valid_actions_mask = state.get_valid_actions_mask();
-                AgentNetwork::choose_action_from_net(&proba_tensor, &valid_actions_mask)?
+                AgentNetwork::choose_action_from_net(&proba_tensor, &valid_actions_mask, false)?
             } else {
                 agents[state.get_player_to_move() as usize]
+                    .as_ref()
                     .unwrap()
                     .choose_action(
                         hand_state,
@@ -150,28 +150,31 @@ impl<'a> Tree<'a> {
                     )?
             };
 
-            if !valid_actions_mask[action_index] {
-                // if state.get_player_to_move() == traverser as i32 {
-                //     hand_state.action_states.push(Self::build_action_state(
-                //         state,
-                //         action_index,
-                //         action_config,
-                //     ));
-                //     let last_state = hand_state.action_states.last_mut().unwrap();
-                //     last_state.reward = -(action_config.buy_in as f32);
-                //     last_state.is_terminal = true;
-                // }
-                // return Ok(());
-                panic!("Invalid action index");
+            if action_index > valid_actions_mask.len() || !valid_actions_mask[action_index] {
+                if state.get_player_to_move() == traverser as i32 {
+                    hand_state.action_states.push(Self::build_action_state(
+                        traverser,
+                        state,
+                        action_index,
+                        true,
+                    ));
+                    let last_state = hand_state.action_states.last_mut().unwrap();
+                    last_state.reward =
+                        -((action_config.player_count - 1) as f32 * action_config.buy_in as f32);
+                    last_state.min_reward = last_state.reward;
+                    last_state.is_terminal = true;
+                    return Ok(());
+                } else {
+                    panic!("Invalid action index");
+                }
             }
 
-            if state.get_player_to_move() == traverser as i32 {
-                hand_state.action_states.push(Self::build_action_state(
-                    state,
-                    action_index,
-                    action_config,
-                ));
-            }
+            hand_state.action_states.push(Self::build_action_state(
+                traverser,
+                state,
+                action_index,
+                false,
+            ));
 
             Self::traverse_state(
                 traverser,
@@ -188,40 +191,43 @@ impl<'a> Tree<'a> {
     }
 
     fn build_action_state(
+        traverser: u32,
         state: &mut Box<dyn State<'a> + 'a>,
         action_index: usize,
-        _action_config: &ActionConfig,
+        is_invalid: bool,
     ) -> ActionState {
         let mut max_reward: u32 = 0;
         for i in 0..state.get_player_count() {
-            if i as i32 != state.get_player_to_move() {
+            if i != traverser {
                 max_reward += state.get_state_data().bets[i as usize];
             }
         }
-
-        // let reward_ratio = (action_config.player_count - 1) as f32 * action_config.buy_in as f32;
 
         ActionState {
             player_to_move: state.get_player_to_move() as u32,
             reward: 0.0,
             valid_actions_mask: state.get_valid_actions_mask(),
             action_taken_index: action_index,
-            action_taken: state
-                .get_child(action_index)
-                .as_ref()
-                .unwrap()
-                .get_state_data()
-                .history
-                .last()
-                .unwrap()
-                .clone(),
+            action_taken: if !state.get_child(action_index).is_none() {
+                Some(
+                    state
+                        .get_child(action_index)
+                        .as_ref()
+                        .unwrap()
+                        .get_state_data()
+                        .history
+                        .last()
+                        .unwrap()
+                        .clone(),
+                )
+            } else {
+                None
+            },
             is_terminal: false,
             street: state.get_state_data().street,
-            // min_reward: -(state.get_state_data().bets[state.get_player_to_move() as usize] as f32)
-            //     / reward_ratio,
-            // max_reward: max_reward as f32 / reward_ratio,
-            min_reward: -(state.get_state_data().bets[state.get_player_to_move() as usize] as f32),
+            min_reward: -(state.get_state_data().bets[traverser as usize] as f32),
             max_reward: max_reward as f32,
+            is_invalid,
         }
     }
 

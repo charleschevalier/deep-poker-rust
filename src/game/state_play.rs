@@ -49,10 +49,21 @@ impl<'a> State<'a> for StatePlay<'a> {
 
         self.handle_fold(biggest_bet);
         self.handle_call(biggest_bet);
+        self.handle_raises(pot, biggest_bet);
+        self.handle_all_in();
 
-        if self.state_data.is_betting_open {
-            self.handle_raises(pot, biggest_bet);
-            self.handle_all_in();
+        assert!(self.children.len() == self.valid_actions_mask.len());
+        assert!(self.children.len() == 3 + self.action_config.postflop_raise_sizes.len());
+
+        let mut valid_cnt = 0;
+        for i in 0..self.children.len() {
+            if self.valid_actions_mask[i] {
+                valid_cnt += 1;
+            }
+        }
+
+        if valid_cnt == 0 {
+            panic!("Not enough valid actions");
         }
     }
 }
@@ -163,6 +174,12 @@ impl<'a> StatePlay<'a> {
     }
 
     fn handle_raise(&mut self, pot: u32, biggest_bet: u32, action_index: usize, action_value: f32) {
+        if action_value == 0.0 {
+            self.children.push(None);
+            self.valid_actions_mask.push(false);
+            return;
+        }
+
         let to_call = biggest_bet - self.get_to_move_bet();
         let raise: u32;
         let actual_bet: u32;
@@ -237,8 +254,6 @@ impl<'a> StatePlay<'a> {
 
             // check if there is any player that has to play..
             if new_state_data.player_to_move != -1 {
-                new_state_data.is_betting_open = false;
-
                 self.children.push(Some(Box::new(StatePlay::new(
                     self.action_config,
                     new_state_data,

@@ -23,14 +23,13 @@ impl<'a> Agent<'a> for AgentNetwork {
             action_config,
             device,
             hand_state.action_states.len(),
-            valid_action_mask,
         )?;
 
         let (proba_tensor, _) = self
             .network
             .forward(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
 
-        Self::choose_action_from_net(&proba_tensor, valid_action_mask)
+        Self::choose_action_from_net(&proba_tensor, valid_action_mask, true)
     }
 }
 
@@ -42,11 +41,12 @@ impl AgentNetwork {
     pub fn choose_action_from_net(
         proba_tensor: &Tensor,
         valid_action_mask: &[bool],
+        no_invalid: bool,
     ) -> Result<usize, Box<dyn std::error::Error>> {
         // Apply valid action mask to tensor
         let mut probas = proba_tensor.squeeze(0)?.to_vec1()?;
         for i in 0..probas.len() {
-            if i >= valid_action_mask.len() || !valid_action_mask[i] {
+            if no_invalid && (i >= valid_action_mask.len() || !valid_action_mask[i]) {
                 probas[i] = 0.0;
             }
         }
@@ -59,7 +59,11 @@ impl AgentNetwork {
             }
         } else {
             // Count positive values in valid_action_mask
-            let true_count = valid_action_mask.iter().filter(|&&x| x).count();
+            let true_count = if no_invalid {
+                valid_action_mask.iter().filter(|&&x| x).count()
+            } else {
+                probas.len()
+            };
             for (i, p) in probas.iter_mut().enumerate() {
                 if i < valid_action_mask.len() && valid_action_mask[i] {
                     *p = 1.0 / (true_count as f32);
@@ -80,7 +84,9 @@ impl AgentNetwork {
             }
         }
 
-        if action_index >= valid_action_mask.len() || !valid_action_mask[action_index] {
+        if no_invalid
+            && (action_index >= valid_action_mask.len() || !valid_action_mask[action_index])
+        {
             println!("Invalid action index: {}", action_index);
             println!("Probas: {:?}", probas);
             return Err("Invalid action index".into());

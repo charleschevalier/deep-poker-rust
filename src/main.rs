@@ -11,7 +11,8 @@ mod model;
 
 fn main() {
     let mut action_config = game::action::ActionConfig::new(3, 300, 20, 9);
-    action_config.preflop_raise_sizes = vec![2.0, 3.0];
+    // 0.0 values are ignored for raises
+    action_config.preflop_raise_sizes = vec![2.0, 3.0, 0.0, 0.0];
     action_config.postflop_raise_sizes = vec![0.25, 0.5, 0.66, 1.0];
 
     // let mut tree = game::tree::Tree::new(3, &action_config);
@@ -22,8 +23,8 @@ fn main() {
 
     let trainer_config = TrainerConfig {
         max_iters: 500000,
-        hands_per_player_per_iteration: 1000,
-        update_step: 256,
+        hands_per_player_per_iteration: 5000,
+        update_step: 64,
         ppo_epsilon: 0.2,
         ppo_delta_1: 3.0,
     };
