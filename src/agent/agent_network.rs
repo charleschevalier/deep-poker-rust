@@ -48,11 +48,11 @@ impl<'a> AgentNetwork {
     ) -> Result<usize, Box<dyn std::error::Error>> {
         // Apply valid action mask to tensor
         let mut probas = proba_tensor.squeeze(0)?.to_vec1()?;
-        // for i in 0..probas.len() {
-        //     if i >= valid_action_mask.len() || !valid_action_mask[i] {
-        //         probas[i] = 0.0;
-        //     }
-        // }
+        for i in 0..probas.len() {
+            if i >= valid_action_mask.len() || !valid_action_mask[i] {
+                probas[i] = 0.0;
+            }
+        }
 
         // Normalize probas
         let sum: f32 = probas.iter().sum();
