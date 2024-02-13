@@ -4,9 +4,9 @@ use super::poker_network::PokerNetwork;
 use super::trainer_config::TrainerConfig;
 use crate::agent::agent_network::AgentNetwork;
 use crate::agent::agent_pool::AgentPool;
+use crate::game::action::ActionConfig;
 use crate::game::hand_state::HandState;
 use crate::game::tree::Tree;
-use crate::{agent::Agent, game::action::ActionConfig};
 use candle_core::{Device, Tensor};
 use candle_nn::Optimizer;
 
@@ -95,7 +95,7 @@ impl<'a> Trainer<'a> {
 
             policy_data = var_data
                 .iter()
-                .filter(|(k, _)| /*k.starts_with("siamese") ||*/ k.starts_with("actor"))
+                .filter(|(k, _)| k.starts_with("siamese") || k.starts_with("actor"))
                 .map(|(_, v)| v.clone())
                 .collect::<Vec<_>>();
 
@@ -108,15 +108,6 @@ impl<'a> Trainer<'a> {
 
         let mut optimizer_policy = candle_nn::AdamW::new_lr(policy_data, 3e-4)?;
         let mut optimizer_critic = candle_nn::AdamW::new_lr(critic_data, 3e-4)?;
-
-        // We split the optimizers just like here:
-        // https://github.com/facebookresearch/drqv2/blob/c0c650b76c6e5d22a7eb5f2edffd1440fe94f8ef/drqv2.py#L198
-        // let all_vars = trained_network.var_map.all_vars();
-
-        // let mut optimizer_actor =
-        //     candle_nn::AdamW::new_lr(trained_network.var_map.all_vars(), 3e-4)?;
-        // let mut optimizer_encoder_critic =
-        //     candle_nn::AdamW::new_lr(trained_network.var_map_critic_encoder.all_vars(), 3e-4)?;
 
         for iteration in (latest_iteration as usize + 1)..self.trainer_config.max_iters {
             println!("Iteration: {}", iteration);
@@ -163,15 +154,22 @@ impl<'a> Trainer<'a> {
             let mut indexes = Vec::new();
             let mut min_rewards = Vec::new();
             let mut max_rewards = Vec::new();
+            let mut gamma_rewards = Vec::new();
 
             for hand_state in hand_states.iter_mut() {
                 indexes.push(step_cnt);
-                let hand_rewards = self.get_discounted_rewards(hand_state, reward_gamma);
+                let hand_rewards: Vec<f32> = hand_state
+                    .get_traverser_action_states()
+                    .iter()
+                    .map(|ast| ast.reward)
+                    .collect();
 
                 for action_state in hand_state.get_traverser_action_states().iter() {
                     min_rewards.push(action_state.min_reward);
                     max_rewards.push(action_state.max_reward);
                 }
+
+                gamma_rewards.append(&mut self.get_discounted_rewards(hand_state, reward_gamma));
 
                 step_cnt += hand_rewards.len();
                 rewards_flat.extend(hand_rewards.iter());
@@ -181,10 +179,11 @@ impl<'a> Trainer<'a> {
             assert!(rewards_flat.len() == step_cnt);
             assert!(min_rewards.len() == step_cnt);
             assert!(max_rewards.len() == step_cnt);
+            assert!(gamma_rewards.len() == step_cnt);
 
-            let rewards_flat_tensor = Tensor::new(rewards_flat, &self.device)?;
             let min_rewards_tensor = Tensor::new(min_rewards, &self.device)?;
             let max_rewards_tensor = Tensor::new(max_rewards, &self.device)?;
+            let gamma_rewards_tensor = Tensor::new(gamma_rewards, &self.device)?;
 
             // Get network inputs
             let mut card_input_vec = Vec::new();
@@ -231,7 +230,7 @@ impl<'a> Trainer<'a> {
                 .to_vec1()?;
 
             for i in 0..rewards.len() {
-                let mut advantage = self.calculate_advantage_gae(
+                let (mut advantage, _) = self.calculate_advantage_gae(
                     &rewards[i],
                     &base_critic_outputs_vec[indexes[i]..indexes[i] + rewards[i].len()],
                     gae_gamma,
@@ -242,17 +241,8 @@ impl<'a> Trainer<'a> {
 
             assert!(advantage_gae.len() == step_cnt);
 
-            // // Normalize advantage_gae
-            // let mean = advantage_gae.iter().sum::<f32>() / advantage_gae.len() as f32;
-            // let variance = advantage_gae
-            //     .iter()
-            //     .map(|x| (x - mean).powf(2.0))
-            //     .sum::<f32>()
-            //     / advantage_gae.len() as f32;
-            // let std_dev = variance.sqrt();
-            // for x in advantage_gae.iter_mut() {
-            //     *x = (*x - mean) / (std_dev + 1e-10);
-            // }
+            // Normalize advantage_gae
+            Self::normalize_mean_std(&mut advantage_gae);
 
             let advantage_tensor = Tensor::new(advantage_gae, &self.device)?;
 
@@ -279,7 +269,7 @@ impl<'a> Trainer<'a> {
 
                 let value_loss = self.get_trinal_clip_value_loss(
                     critic_outputs.as_ref().unwrap(),
-                    &rewards_flat_tensor,
+                    &gamma_rewards_tensor,
                     &max_rewards_tensor,
                     &min_rewards_tensor,
                 );
@@ -354,7 +344,7 @@ impl<'a> Trainer<'a> {
         values: &[f32],
         gamma: f32,
         lamda: f32,
-    ) -> Vec<f32> {
+    ) -> (Vec<f32>, Vec<f32>) {
         let size = rewards.len();
         let mut advantage = vec![0.0; size + 1];
 
@@ -363,12 +353,13 @@ impl<'a> Trainer<'a> {
                 rewards[t] + gamma * (if t == size - 1 { 0.0 } else { values[t + 1] }) - values[t];
             advantage[t] = delta + gamma * lamda * advantage[t + 1];
         }
+
         let mut value_target = values.to_vec();
         for i in 0..size {
             value_target[i] += advantage[i];
         }
 
-        value_target
+        (advantage[0..size].to_vec(), value_target)
     }
 
     fn get_discounted_rewards(&self, hand_state: &HandState, gamma: f32) -> Vec<f32> {
@@ -426,5 +417,14 @@ impl<'a> Trainer<'a> {
         let clipped = rewards.clamp(min_bet, max_bet)?;
         let diff = (clipped - values.squeeze(1))?;
         (diff.as_ref() * diff.as_ref())?.mean(0)
+    }
+
+    fn normalize_mean_std(vec: &mut [f32]) {
+        let mean = vec.iter().sum::<f32>() / vec.len() as f32;
+        let variance = vec.iter().map(|x| (x - mean).powf(2.0)).sum::<f32>() / vec.len() as f32;
+        let std_dev = variance.sqrt();
+        for x in vec.iter_mut() {
+            *x = (*x - mean) / (std_dev + 1e-10);
+        }
     }
 }

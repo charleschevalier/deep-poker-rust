@@ -88,19 +88,14 @@ impl<'a> Tree<'a> {
         if matches!(state.get_type(), StateType::Terminal) {
             // Use reward from terminal state. We may have no action states if every player folded
             // except the traverser in BB
-            if !hand_state.action_states.is_empty() {
-                let last_state = hand_state.action_states.last_mut().unwrap();
-                // let reward_ratio =
-                //     (action_config.player_count - 1) as f32 * action_config.buy_in as f32;
-                // last_state.reward = state.get_reward(traverser) / reward_ratio;
-                last_state.reward = state.get_reward(traverser);
-                last_state.is_terminal = true;
-            }
+            Self::update_last_traverser_reward(hand_state, state.get_reward(traverser), false);
         } else if !state.is_player_in_hand(traverser) {
             // Use the negative of his bet as reward
-            let last_state = hand_state.action_states.last_mut().unwrap();
-            last_state.reward = -(state.get_state_data().bets[traverser as usize] as f32);
-            last_state.is_terminal = true;
+            Self::update_last_traverser_reward(
+                hand_state,
+                -(state.get_state_data().bets[traverser as usize] as f32),
+                false,
+            );
         } else if matches!(state.get_type(), StateType::Chance) {
             // Create children
             state.create_children();
@@ -136,7 +131,7 @@ impl<'a> Tree<'a> {
                     network.forward(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
 
                 let valid_actions_mask = state.get_valid_actions_mask();
-                AgentNetwork::choose_action_from_net(&proba_tensor, &valid_actions_mask, false)?
+                AgentNetwork::choose_action_from_net(&proba_tensor, &valid_actions_mask, true)?
             } else {
                 agents[state.get_player_to_move() as usize]
                     .as_ref()
@@ -150,6 +145,10 @@ impl<'a> Tree<'a> {
                     )?
             };
 
+            if state.get_state_data().street == 1 && action_index >= 4 && action_index <= 5 {
+                println!("Action index: {}", action_index);
+            }
+
             if action_index > valid_actions_mask.len() || !valid_actions_mask[action_index] {
                 if state.get_player_to_move() == traverser as i32 {
                     hand_state.action_states.push(Self::build_action_state(
@@ -158,11 +157,12 @@ impl<'a> Tree<'a> {
                         action_index,
                         true,
                     ));
-                    let last_state = hand_state.action_states.last_mut().unwrap();
-                    last_state.reward =
-                        -((action_config.player_count - 1) as f32 * action_config.buy_in as f32);
-                    last_state.min_reward = last_state.reward;
-                    last_state.is_terminal = true;
+
+                    Self::update_last_traverser_reward(
+                        hand_state,
+                        -((action_config.player_count - 1) as f32 * action_config.buy_in as f32),
+                        true,
+                    );
                     return Ok(());
                 } else {
                     panic!("Invalid action index");
@@ -347,6 +347,21 @@ impl<'a> Tree<'a> {
         }
 
         Ok(())
+    }
+
+    fn update_last_traverser_reward(hand_state: &mut HandState, reward: f32, set_min: bool) {
+        if let Some(b) = hand_state
+            .action_states
+            .iter_mut()
+            .rev()
+            .find(|b| b.player_to_move == hand_state.traverser)
+        {
+            b.reward = reward;
+            b.is_terminal = true;
+            if set_min {
+                b.min_reward = reward;
+            }
+        }
     }
 
     // pub const fn card_from_i32(val: i32) -> Card {
