@@ -142,7 +142,7 @@ impl<'a> Tree<'a> {
                 agents[state.get_player_to_move() as usize]
                     .unwrap()
                     .choose_action(
-                        &hand_state,
+                        hand_state,
                         &valid_actions_mask,
                         state.get_state_data().street,
                         action_config,

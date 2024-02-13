@@ -91,7 +91,6 @@ impl<'a> Trainer<'a> {
         {
             let var_data = trained_network.var_map.data().lock().unwrap();
             var_data.iter().for_each(|(k, v)| {
-                println!("Key: {}", k);
                 if k.starts_with("siamese") {
                     policy_data.push(v.clone());
                     critic_data.push(v.clone());
@@ -126,12 +125,11 @@ impl<'a> Trainer<'a> {
                 for player in 0..self.player_cnt {
                     let mut agents: Vec<Option<&Box<dyn Agent>>> = Vec::new();
                     for p in 0..self.player_cnt {
-                        let agent: Option<&Box<dyn Agent<'_>>>;
-                        if p != player {
-                            agent = Some(agent_pool.get_agent());
+                        let agent: Option<&Box<dyn Agent<'_>>> = if p != player {
+                            Some(agent_pool.get_agent())
                         } else {
-                            agent = None;
-                        }
+                            None
+                        };
                         agents.push(agent);
                     }
                     // Select agents

@@ -30,14 +30,11 @@ impl<'a> Agent<'a> for AgentNetwork {
             .network
             .forward(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
 
-        Ok(Self::choose_action_from_net(
-            &proba_tensor,
-            valid_action_mask,
-        )?)
+        Self::choose_action_from_net(&proba_tensor, valid_action_mask)
     }
 }
 
-impl<'a> AgentNetwork {
+impl AgentNetwork {
     pub fn new(network: PokerNetwork) -> AgentNetwork {
         AgentNetwork { network }
     }
@@ -56,8 +53,18 @@ impl<'a> AgentNetwork {
 
         // Normalize probas
         let sum: f32 = probas.iter().sum();
-        for p in &mut probas {
-            *p /= sum;
+        if sum > 0.0 {
+            for p in &mut probas {
+                *p /= sum;
+            }
+        } else {
+            // Count positive values in valid_action_mask
+            let true_count = valid_action_mask.iter().filter(|&&x| x).count();
+            for (i, p) in probas.iter_mut().enumerate() {
+                if i < valid_action_mask.len() && valid_action_mask[i] {
+                    *p = 1.0 / (true_count as f32);
+                }
+            }
         }
 
         // Choose action based on the probability distribution
