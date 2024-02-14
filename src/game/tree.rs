@@ -237,10 +237,17 @@ impl<'a> Tree<'a> {
         &self,
         network: &PokerNetwork,
         device: &candle_core::Device,
+        no_invalid_for_traverser: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let action_count = self.action_config.postflop_raise_sizes.len() + 3;
         let mut result: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 13]; action_count];
         let mut count: Vec<Vec<Vec<u32>>> = vec![vec![vec![0; 13]; 13]; action_count];
+        let valid_action_mask: Vec<bool> = self
+            .action_config
+            .preflop_raise_sizes
+            .iter()
+            .map(|&x| x > 0.0)
+            .collect();
 
         // Iterate through card combinations
         for i in 0..52 {
@@ -279,20 +286,43 @@ impl<'a> Tree<'a> {
                 let min_rank = if rank1 < rank2 { rank1 } else { rank2 };
                 let max_rank = if rank1 > rank2 { rank1 } else { rank2 };
 
-                let mut probs: Vec<f32> = proba_tensor.squeeze(0)?.to_vec1()?;
+                let mut probas: Vec<f32> = proba_tensor.squeeze(0)?.to_vec1()?;
 
                 // Normalize probs
-                let sum: f32 = probs.iter().sum();
-                for p in &mut probs {
-                    *p /= sum;
+                for i in 0..probas.len() {
+                    if no_invalid_for_traverser
+                        && (i >= valid_action_mask.len() || !valid_action_mask[i])
+                    {
+                        probas[i] = 0.0;
+                    }
+                }
+
+                // Normalize probas
+                let sum: f32 = probas.iter().sum();
+                if sum > 0.0 {
+                    for p in &mut probas {
+                        *p /= sum;
+                    }
+                } else {
+                    // Count positive values in valid_action_mask
+                    let true_count = if no_invalid_for_traverser {
+                        valid_action_mask.iter().filter(|&&x| x).count()
+                    } else {
+                        probas.len()
+                    };
+                    for (i, p) in probas.iter_mut().enumerate() {
+                        if i < valid_action_mask.len() && valid_action_mask[i] {
+                            *p = 1.0 / (true_count as f32);
+                        }
+                    }
                 }
 
                 for action_index in 0..action_count {
                     if is_suited {
-                        result[action_index][min_rank][max_rank] += probs[action_index];
+                        result[action_index][min_rank][max_rank] += probas[action_index];
                         count[action_index][min_rank][max_rank] += 1;
                     } else {
-                        result[action_index][max_rank][min_rank] += probs[action_index];
+                        result[action_index][max_rank][min_rank] += probas[action_index];
                         count[action_index][max_rank][min_rank] += 1;
                     }
                 }
@@ -300,6 +330,9 @@ impl<'a> Tree<'a> {
         }
 
         for action_index in 0..action_count {
+            if no_invalid_for_traverser && !valid_action_mask[action_index] {
+                continue;
+            }
             println!();
             println!("Action index: {}", action_index);
             println!();

@@ -292,15 +292,21 @@ impl<'a> Trainer<'a> {
                 optimizer_policy.backward_step(&policy_loss?)?;
                 optimizer_critic.backward_step(&value_loss?)?;
             }
-            self.tree
-                .print_first_actions(&trained_network, &self.device)?;
+            self.tree.print_first_actions(
+                &trained_network,
+                &self.device,
+                self.trainer_config.no_invalid_for_traverser,
+            )?;
 
             if iteration > 0 && iteration % 50 == 0 {
                 trained_network.var_map.save(
                     Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration)),
                 )?;
-                self.tree
-                    .print_first_actions(&trained_network, &self.device)?;
+                self.tree.print_first_actions(
+                    &trained_network,
+                    &self.device,
+                    self.trainer_config.no_invalid_for_traverser,
+                )?;
             }
 
             if iteration % 50 == 0 {
