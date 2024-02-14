@@ -242,12 +242,16 @@ impl<'a> Tree<'a> {
         let action_count = self.action_config.postflop_raise_sizes.len() + 3;
         let mut result: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 13]; action_count];
         let mut count: Vec<Vec<Vec<u32>>> = vec![vec![vec![0; 13]; 13]; action_count];
-        let valid_action_mask: Vec<bool> = self
+        let mut valid_action_mask: Vec<bool> = self
             .action_config
             .preflop_raise_sizes
             .iter()
             .map(|&x| x > 0.0)
             .collect();
+
+        valid_action_mask.insert(0, true);
+        valid_action_mask.insert(0, true);
+        valid_action_mask.push(true);
 
         // Iterate through card combinations
         for i in 0..52 {
@@ -319,11 +323,11 @@ impl<'a> Tree<'a> {
 
                 for action_index in 0..action_count {
                     if is_suited {
-                        result[action_index][min_rank][max_rank] += probas[action_index];
-                        count[action_index][min_rank][max_rank] += 1;
-                    } else {
                         result[action_index][max_rank][min_rank] += probas[action_index];
                         count[action_index][max_rank][min_rank] += 1;
+                    } else {
+                        result[action_index][min_rank][max_rank] += probas[action_index];
+                        count[action_index][min_rank][max_rank] += 1;
                     }
                 }
             }

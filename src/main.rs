@@ -9,7 +9,20 @@ mod agent;
 mod game;
 mod model;
 
+use poker::{Card, Rank, Suit};
+
+fn test_cards() {
+    let mut card = Card::new(Rank::Seven, Suit::Spades);
+    println!("Rank: {:?}", card.rank() as usize);
+    println!("Suit: {:?}", card.suit() as usize);
+
+    card = Card::new(Rank::Seven, Suit::Clubs);
+    println!("Rank: {:?}", card.rank() as usize);
+    println!("Suit: {:?}", card.suit() as usize);
+}
+
 fn main() {
+    test_cards();
     let mut action_config = game::action::ActionConfig::new(3, 300, 20, 9);
     // 0.0 values are ignored for raises
     action_config.preflop_raise_sizes = vec![2.0, 3.0, 0.0, 0.0];
@@ -23,8 +36,8 @@ fn main() {
 
     let trainer_config = TrainerConfig {
         max_iters: 500000,
-        hands_per_player_per_iteration: 5000,
-        update_step: 256,
+        hands_per_player_per_iteration: 1000,
+        update_step: 64,
         ppo_epsilon: 0.2,
         ppo_delta_1: 3.0,
         no_invalid_for_traverser: true,

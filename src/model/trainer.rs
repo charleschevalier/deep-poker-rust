@@ -72,9 +72,12 @@ impl<'a> Trainer<'a> {
             let file_name = file_name.split('_').collect::<Vec<&str>>();
 
             if file_name.len() > 2 {
-                let iteration = file_name[2].split('.').collect::<Vec<&str>>()[0].parse::<u32>()?;
-                if iteration > latest_iteration {
-                    latest_iteration = iteration;
+                let split = file_name[2].split('.').collect::<Vec<&str>>();
+                if (split.len() == 2) && (split[1] == "pt") {
+                    let iteration = split[0].parse::<u32>()?;
+                    if iteration > latest_iteration {
+                        latest_iteration = iteration;
+                    }
                 }
             }
         }
@@ -95,7 +98,7 @@ impl<'a> Trainer<'a> {
 
             policy_data = var_data
                 .iter()
-                .filter(|(k, _)| k.starts_with("siamese") || k.starts_with("actor"))
+                .filter(|(k, _)| /*k.starts_with("siamese") ||*/ k.starts_with("actor"))
                 .map(|(_, v)| v.clone())
                 .collect::<Vec<_>>();
 
@@ -154,7 +157,6 @@ impl<'a> Trainer<'a> {
 
             // Calculate cumulative rewards for each hand state
             let mut rewards = Vec::new();
-            let mut rewards_flat: Vec<f32> = Vec::new();
             let mut step_cnt = 0;
             let mut indexes = Vec::new();
             let mut min_rewards = Vec::new();
@@ -177,11 +179,9 @@ impl<'a> Trainer<'a> {
                 gamma_rewards.append(&mut self.get_discounted_rewards(hand_state, reward_gamma));
 
                 step_cnt += hand_rewards.len();
-                rewards_flat.extend(hand_rewards.iter());
                 rewards.push(hand_rewards);
             }
 
-            assert!(rewards_flat.len() == step_cnt);
             assert!(min_rewards.len() == step_cnt);
             assert!(max_rewards.len() == step_cnt);
             assert!(gamma_rewards.len() == step_cnt);
@@ -309,6 +309,7 @@ impl<'a> Trainer<'a> {
                 )?;
             }
 
+            // Put a new agent in the pool every 50 iterations
             if iteration % 50 == 0 {
                 let mut copy_net = PokerNetwork::new(
                     self.player_cnt,
