@@ -24,9 +24,10 @@ fn main() {
     let trainer_config = TrainerConfig {
         max_iters: 500000,
         hands_per_player_per_iteration: 5000,
-        update_step: 64,
+        update_step: 256,
         ppo_epsilon: 0.2,
         ppo_delta_1: 3.0,
+        no_invalid_for_traverser: true,
     };
 
     let device = Device::cuda_if_available(0).unwrap();

@@ -127,8 +127,13 @@ impl<'a> Trainer<'a> {
                         agents.push(agent);
                     }
                     // Select agents
-                    self.tree
-                        .traverse(traverser, &trained_network, &agents, &self.device)?;
+                    self.tree.traverse(
+                        traverser,
+                        &trained_network,
+                        &agents,
+                        &self.device,
+                        self.trainer_config.no_invalid_for_traverser,
+                    )?;
 
                     // Make sure the hand state has at least one state for the traverser
                     let hs = self.tree.hand_state.clone();

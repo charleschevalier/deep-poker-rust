@@ -4,4 +4,5 @@ pub struct TrainerConfig {
     pub update_step: usize,
     pub ppo_epsilon: f32,
     pub ppo_delta_1: f32,
+    pub no_invalid_for_traverser: bool,
 }

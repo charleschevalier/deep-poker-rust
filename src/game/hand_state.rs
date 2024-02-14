@@ -203,22 +203,4 @@ impl HandState {
             result
         }
     }
-
-    pub fn get_traverser_action_states_mut(&mut self) -> Vec<&mut ActionState> {
-        let result: Vec<&mut ActionState> = self
-            .action_states
-            .iter_mut()
-            .filter(|action_state| action_state.player_to_move == self.traverser)
-            .collect();
-
-        // Get last element
-        let last = result.last();
-        if last.is_some() && last.unwrap().is_invalid {
-            // Take only last element so the network learns the invalid action but does not
-            // propagate wrong rewards on potentially correct actions before that
-            result.into_iter().rev().take(1).collect()
-        } else {
-            result
-        }
-    }
 }

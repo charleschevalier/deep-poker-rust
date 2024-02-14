@@ -49,17 +49,18 @@ impl<'a> Tree<'a> {
         network: &PokerNetwork,
         agents: &Vec<Option<&dyn Agent>>,
         device: &candle_core::Device,
+        no_invalid_for_traverser: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.reset(traverser);
 
         Tree::traverse_state(
-            traverser,
             &mut self.root,
             self.hand_state.as_mut().unwrap(),
             network,
             agents,
             self.action_config,
             device,
+            no_invalid_for_traverser,
         )?;
         // println!(
         //     "Action states length: {}",
@@ -70,13 +71,13 @@ impl<'a> Tree<'a> {
     }
 
     fn traverse_state(
-        traverser: u32,
         state_option: &mut Option<Box<dyn State<'a> + 'a>>,
         hand_state: &mut HandState,
         network: &PokerNetwork,
         agents: &Vec<Option<&dyn Agent>>,
         action_config: &ActionConfig,
         device: &candle_core::Device,
+        no_invalid_for_traverser: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // If state is None, panic
         if state_option.is_none() {
@@ -84,6 +85,7 @@ impl<'a> Tree<'a> {
         }
 
         let state = state_option.as_mut().unwrap();
+        let traverser = hand_state.traverser;
 
         if matches!(state.get_type(), StateType::Terminal) {
             // Use reward from terminal state. We may have no action states if every player folded
@@ -102,13 +104,13 @@ impl<'a> Tree<'a> {
 
             // Traverse first child
             return Self::traverse_state(
-                traverser,
                 state.get_child(0),
                 hand_state,
                 network,
                 agents,
                 action_config,
                 device,
+                no_invalid_for_traverser,
             );
         } else {
             // Traverse next player
@@ -131,7 +133,11 @@ impl<'a> Tree<'a> {
                     network.forward(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
 
                 let valid_actions_mask = state.get_valid_actions_mask();
-                AgentNetwork::choose_action_from_net(&proba_tensor, &valid_actions_mask, true)?
+                AgentNetwork::choose_action_from_net(
+                    &proba_tensor,
+                    &valid_actions_mask,
+                    no_invalid_for_traverser,
+                )?
             } else {
                 agents[state.get_player_to_move() as usize]
                     .as_ref()
@@ -144,10 +150,6 @@ impl<'a> Tree<'a> {
                         device,
                     )?
             };
-
-            if state.get_state_data().street == 1 && action_index >= 4 && action_index <= 5 {
-                println!("Action index: {}", action_index);
-            }
 
             if action_index > valid_actions_mask.len() || !valid_actions_mask[action_index] {
                 if state.get_player_to_move() == traverser as i32 {
@@ -177,13 +179,13 @@ impl<'a> Tree<'a> {
             ));
 
             Self::traverse_state(
-                traverser,
                 state.get_child(action_index),
                 hand_state,
                 network,
                 agents,
                 action_config,
                 device,
+                no_invalid_for_traverser,
             )?;
         }
 
