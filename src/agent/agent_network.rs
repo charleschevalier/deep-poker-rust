@@ -3,13 +3,16 @@ use crate::game::hand_state::HandState;
 use crate::model::poker_network::PokerNetwork;
 use candle_core::Tensor;
 
+use rand::distributions::Distribution;
 use rand::Rng;
 
-pub struct AgentNetwork {
-    network: PokerNetwork,
+pub struct AgentNetwork<'a> {
+    network: PokerNetwork<'a>,
+    game_count: u32,
+    won_count: u32,
 }
 
-impl<'a> Agent<'a> for AgentNetwork {
+impl<'a> Agent<'a> for AgentNetwork<'a> {
     fn choose_action(
         &self,
         hand_state: &HandState,
@@ -33,9 +36,13 @@ impl<'a> Agent<'a> for AgentNetwork {
     }
 }
 
-impl AgentNetwork {
+impl<'a> AgentNetwork<'a> {
     pub fn new(network: PokerNetwork) -> AgentNetwork {
-        AgentNetwork { network }
+        AgentNetwork {
+            network,
+            game_count: 0,
+            won_count: 0,
+        }
     }
 
     pub fn choose_action_from_net(
@@ -52,10 +59,10 @@ impl AgentNetwork {
         }
 
         // Normalize probas
-        let sum: f32 = probas.iter().sum();
-        if sum > 0.0 {
+        let sum_norm: f32 = probas.iter().sum();
+        if sum_norm > 0.0 {
             for p in &mut probas {
-                *p /= sum;
+                *p /= sum_norm;
             }
         } else {
             // Count positive values in valid_action_mask
@@ -73,22 +80,24 @@ impl AgentNetwork {
 
         // Choose action based on the probability distribution
         let mut rng = rand::thread_rng();
-        let random_float_0_1: f32 = rng.gen();
-        let mut sum: f32 = 0.0;
-        let mut action_index: usize = 0;
-        for (i, p) in probas.iter().enumerate() {
-            sum += p;
-            if sum > random_float_0_1 {
-                action_index = i;
-                break;
-            }
-        }
+        // let random_float_0_1: f32 = rng.gen();
+        // let mut sum: f32 = 0.0;
+        // let mut action_index: usize = 0;
+        // for (i, p) in probas.iter().enumerate() {
+        //     sum += p;
+        //     if sum > random_float_0_1 {
+        //         action_index = i;
+        //         break;
+        //     }
+        // }
+        let distribution = rand::distributions::WeightedIndex::new(probas).unwrap();
+        let action_index = distribution.sample(&mut rng);
 
         if no_invalid
             && (action_index >= valid_action_mask.len() || !valid_action_mask[action_index])
         {
-            println!("Invalid action index: {}", action_index);
-            println!("Probas: {:?}", probas);
+            // println!("Invalid action index: {}", action_index);
+            // println!("Probas: {:?}", probas);
             return Err("Invalid action index".into());
         }
 

@@ -261,7 +261,7 @@ impl<'a> Tree<'a> {
                 let rank2: usize = j / 4;
                 let suit2: usize = j % 4;
 
-                let mut card_vecs: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 4]; 5];
+                let mut card_vecs: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 4]; 6];
 
                 // Set hand cards
                 card_vecs[0][suit1][rank1] = 1.0;
@@ -432,4 +432,99 @@ impl<'a> Tree<'a> {
 
     //     Card::new(rank_f, suit_f)
     // }
+
+    pub fn _play_one_hand(
+        &mut self,
+        network: &PokerNetwork,
+        device: &candle_core::Device,
+        no_invalid_for_traverser: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.reset(0);
+
+        let mut gs = self.root.as_mut().unwrap();
+        let mut first = true;
+
+        while !matches!(gs.get_type(), StateType::Terminal) {
+            if matches!(gs.get_type(), StateType::Chance) {
+                gs.create_children();
+                gs = gs.get_child(0).as_mut().unwrap();
+
+                if first {
+                    println!();
+                    print!("Player Cards: ");
+                    for i in 0..self.player_cnt {
+                        let player_cards = gs.get_state_data().hands[i as usize].clone();
+                        print!(
+                            "{}{} ",
+                            player_cards[0].rank_suit_string(),
+                            player_cards[1].rank_suit_string()
+                        );
+                    }
+                    println!();
+                    first = false;
+                } else if gs.get_state_data().street >= 2 && !gs.get_state_data().board.is_empty() {
+                    print!("Table Cards: ");
+                    let board_cnt = match gs.get_state_data().street {
+                        2 => 3,
+                        3 => 4,
+                        4 => 5,
+                        _ => 0,
+                    };
+
+                    for i in 0..board_cnt {
+                        print!(
+                            "{} ",
+                            gs.get_state_data().board[i as usize].rank_suit_string()
+                        );
+                    }
+                    println!();
+                }
+            } else {
+                let p_to_move = gs.get_player_to_move();
+                print!("Player {}'s turn: ", p_to_move);
+
+                let (card_tensor, action_tensor) = self.hand_state.as_ref().unwrap().to_input(
+                    gs.get_state_data().street,
+                    self.action_config,
+                    device,
+                    self.hand_state.as_ref().unwrap().action_states.len(),
+                )?;
+
+                let (proba_tensor, _) =
+                    network.forward(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
+
+                gs.create_children();
+
+                let valid_actions_mask = gs.get_valid_actions_mask();
+                let action_index = AgentNetwork::choose_action_from_net(
+                    &proba_tensor,
+                    &valid_actions_mask,
+                    no_invalid_for_traverser,
+                )?;
+
+                gs = gs.get_child(action_index).as_mut().unwrap();
+
+                print!(
+                    "{} ({} {})",
+                    gs.get_state_data()
+                        .history
+                        .last()
+                        .unwrap()
+                        .to_print_string(),
+                    gs.get_state_data().bets[p_to_move as usize],
+                    gs.get_state_data().stacks[p_to_move as usize],
+                );
+                println!();
+            }
+        }
+
+        println!();
+        print!("Rewards: ");
+        for i in 0..self.player_cnt {
+            print!("{} ", gs.get_reward(i));
+        }
+        println!();
+
+        Ok(())
+    }
 }

@@ -15,6 +15,18 @@ pub struct Action {
     pub street: u8,
 }
 
+impl Action {
+    pub fn to_print_string(&self) -> String {
+        match self.action_type {
+            ActionType::None => String::from("None"),
+            ActionType::Fold => String::from("Fold"),
+            ActionType::Call => String::from("Call"),
+            ActionType::Raise => format!("{}{}", "Raise", self.raise_index),
+            ActionType::AllIn => String::from("AllIn"),
+        }
+    }
+}
+
 pub struct ActionConfig {
     pub player_count: u32,
     pub commited_to_pot_percentage: u8,

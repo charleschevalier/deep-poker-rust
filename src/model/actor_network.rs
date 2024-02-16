@@ -11,7 +11,7 @@ impl ActorNetwork {
         vb: &VarBuilder,
         action_count: usize,
     ) -> Result<ActorNetwork, Box<dyn std::error::Error>> {
-        let weight_dims: Vec<Vec<usize>> = vec![vec![256, 256], vec![action_count, 256]];
+        let weight_dims: Vec<Vec<usize>> = vec![vec![1024, 1024], vec![action_count, 1024]];
 
         Ok(ActorNetwork {
             linear_1: linear(

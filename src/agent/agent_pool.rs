@@ -34,11 +34,11 @@ impl<'a> AgentPool<'a> {
 
         let mut rng = rand::thread_rng();
 
-        // Return random agent 10% of the time
-        // let random_float_0_1: f32 = rng.gen();
-        // if random_float_0_1 <= 0.25 {
-        //     return (-1, &*self.agent_random);
-        // }
+        // Return random agent 15% of the time
+        let random_float_0_1: f32 = rng.gen();
+        if random_float_0_1 <= 0.15 {
+            return (-1, &*self.agent_random);
+        }
 
         // Get random index in the last 10 networks in self.agents
         let rand_index = if self.agents.len() >= 10 {

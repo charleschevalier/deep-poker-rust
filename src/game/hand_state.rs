@@ -55,12 +55,12 @@ impl HandState {
     ) -> Result<(Tensor, Tensor), Box<dyn std::error::Error>> {
         // Create card tensor
         // Shape is (street_cnt + 1 for all cards) x number_of_suits x number_of_ranks
-        let mut card_vecs: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 4]; 5];
+        let mut card_vecs: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 4]; 6];
 
         // Set hand cards
         for card in self.hand.iter() {
             card_vecs[0][card.suit() as usize][card.rank() as usize] = 1.0;
-            card_vecs[4][card.suit() as usize][card.rank() as usize] = 1.0;
+            card_vecs[5][card.suit() as usize][card.rank() as usize] = 1.0;
         }
 
         // Set flop cards
@@ -69,6 +69,7 @@ impl HandState {
                 let card = self.board[i];
                 card_vecs[1][card.suit() as usize][card.rank() as usize] = 1.0;
                 card_vecs[4][card.suit() as usize][card.rank() as usize] = 1.0;
+                card_vecs[5][card.suit() as usize][card.rank() as usize] = 1.0;
             }
         }
 
@@ -77,6 +78,7 @@ impl HandState {
             let card = self.board[3];
             card_vecs[2][card.suit() as usize][card.rank() as usize] = 1.0;
             card_vecs[4][card.suit() as usize][card.rank() as usize] = 1.0;
+            card_vecs[5][card.suit() as usize][card.rank() as usize] = 1.0;
         }
 
         // Set river cards
@@ -84,6 +86,7 @@ impl HandState {
             let card = self.board[4];
             card_vecs[3][card.suit() as usize][card.rank() as usize] = 1.0;
             card_vecs[4][card.suit() as usize][card.rank() as usize] = 1.0;
+            card_vecs[5][card.suit() as usize][card.rank() as usize] = 1.0;
         }
 
         // Print card_vecs as matrix
