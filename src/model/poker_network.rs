@@ -10,8 +10,7 @@ pub struct PokerNetwork<'a> {
     siamese_network: SiameseNetworkConv,
     actor_network: ActorNetwork,
     critic_network: CriticNetwork,
-    pub var_map_actor: VarMap,
-    pub var_map_critic_siamese: VarMap,
+    pub var_map: VarMap,
 
     player_cnt: u32,
     action_config: &'a ActionConfig,
@@ -26,30 +25,25 @@ impl<'a> PokerNetwork<'a> {
         device: Device,
         train: bool,
     ) -> Result<PokerNetwork, Box<dyn std::error::Error>> {
-        let var_map_actor = VarMap::new();
-        let vb_actor = VarBuilder::from_varmap(&var_map_actor, DType::F32, &device);
-
-        let var_map_cs = VarMap::new();
-        let vb_cs = VarBuilder::from_varmap(&var_map_cs, DType::F32, &device);
+        let var_map = VarMap::new();
+        let vb = VarBuilder::from_varmap(&var_map, DType::F32, &device);
 
         let siamese_network = SiameseNetworkConv::new(
             player_count,
             3 + action_config.postflop_raise_sizes.len() as u32, // Each raise size + fold, call, check
             player_count as usize * 3, // 3 actions max per player per street => TODO: prevent situations where we have more than 3 actions
-            &vb_cs,
+            &vb,
         )?;
 
-        let actor_network =
-            ActorNetwork::new(&vb_actor, 3 + action_config.postflop_raise_sizes.len())?;
+        let actor_network = ActorNetwork::new(&vb, 3 + action_config.postflop_raise_sizes.len())?;
 
-        let critic_network = CriticNetwork::new(&vb_cs)?;
+        let critic_network = CriticNetwork::new(&vb)?;
 
         Ok(PokerNetwork {
             siamese_network,
             actor_network,
             critic_network,
-            var_map_actor,
-            var_map_critic_siamese: var_map_cs,
+            var_map,
             player_cnt: player_count,
             action_config,
             device,
@@ -67,19 +61,11 @@ impl<'a> PokerNetwork<'a> {
             false,
         )?;
 
-        let var_map_actor = self.var_map_actor.data().lock().unwrap();
+        let var_map_actor = self.var_map.data().lock().unwrap();
         // We perform a deep copy of the varmap using Tensor::copy on Var
         var_map_actor.iter().for_each(|(k, v)| {
             copy_net
-                .var_map_actor
-                .set_one(k, v.as_tensor().copy().unwrap())
-                .unwrap();
-        });
-
-        let var_map_critic_siamese = self.var_map_critic_siamese.data().lock().unwrap();
-        var_map_critic_siamese.iter().for_each(|(k, v)| {
-            copy_net
-                .var_map_critic_siamese
+                .var_map
                 .set_one(k, v.as_tensor().copy().unwrap())
                 .unwrap();
         });

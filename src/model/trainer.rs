@@ -83,20 +83,36 @@ impl<'a> Trainer<'a> {
         }
 
         if latest_iteration > 0 {
-            trained_network.var_map_actor.load(
-                trained_network_path.join(format!("poker_network_actor_{}.pt", latest_iteration)),
-            )?;
-            trained_network.var_map_critic_siamese.load(
-                trained_network_path.join(format!("poker_network_cs_{}.pt", latest_iteration)),
+            trained_network.var_map.load(
+                trained_network_path.join(format!("poker_network_{}.pt", latest_iteration)),
             )?;
 
-            // TODO: Also load 5 previous iterations
+            // TODO: Also load 5 previous iterations as agents
         }
 
-        let mut optimizer_policy =
-            candle_nn::AdamW::new_lr(trained_network.var_map_actor.all_vars(), 0.01)?;
-        let mut optimizer_critic =
-            candle_nn::AdamW::new_lr(trained_network.var_map_critic_siamese.all_vars(), 0.01)?;
+        let policy_data: Vec<candle_core::Var>;
+        let critic_data: Vec<candle_core::Var>;
+
+        {
+            // Here, Var::clone is not a deep copy, but a shallow copy. That's what we need for the
+            // optimizer to work properly.
+            let var_data = trained_network.var_map.data().lock().unwrap();
+
+            policy_data = var_data
+                .iter()
+                .filter(|(k, _)| k.starts_with("siamese") || k.starts_with("actor"))
+                .map(|(_, v)| v.clone())
+                .collect::<Vec<_>>();
+
+            critic_data = var_data
+                .iter()
+                .filter(|(k, _)| k.starts_with("siamese") || k.starts_with("critic"))
+                .map(|(_, v)| v.clone())
+                .collect::<Vec<_>>();
+        }
+
+        let mut optimizer_policy = candle_nn::AdamW::new_lr(policy_data, 3e-4)?;
+        let mut optimizer_critic = candle_nn::AdamW::new_lr(critic_data, 3e-4)?;
 
         for iteration in (latest_iteration as usize + 1)..self.trainer_config.max_iters {
             println!("Iteration: {}", iteration);
@@ -293,9 +309,10 @@ impl<'a> Trainer<'a> {
 
                 // let total_loss = policy_loss?.add(&value_loss?)?;
                 // optimizer_policy.backward_step(&total_loss)?;
+                policy_loss?.backward();
 
-                optimizer_policy.backward_step(&policy_loss?)?;
-                optimizer_critic.backward_step(&value_loss?)?;
+                // optimizer_policy.backward_step(&policy_loss?)?;
+                // optimizer_critic.backward_step(&value_loss?)?;
 
                 // trained_network.print_weights();
             }
@@ -314,13 +331,8 @@ impl<'a> Trainer<'a> {
             // }
 
             if iteration > 0 && iteration % 50 == 0 {
-                trained_network.var_map_actor.save(
-                    Path::new(&self.output_path)
-                        .join(&format!("poker_network_actor_{}.pt", iteration)),
-                )?;
-                trained_network.var_map_critic_siamese.save(
-                    Path::new(&self.output_path)
-                        .join(&format!("poker_network_cs_{}.pt", iteration)),
+                trained_network.var_map.save(
+                    Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration)),
                 )?;
                 self.tree.print_first_actions(
                     &trained_network,
