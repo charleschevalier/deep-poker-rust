@@ -4,7 +4,7 @@ pub trait Agent<'a> {
     fn choose_action(
         &self,
         hand_state: &HandState,
-        valid_action_mask: &[bool],
+        valid_actions_mask: &[bool],
         street: u8,
         action_config: &crate::game::action::ActionConfig,
         device: &candle_core::Device,

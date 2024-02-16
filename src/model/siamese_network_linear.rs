@@ -1,3 +1,5 @@
+// NOT USED, we use the CNN version instead
+
 use candle_core::{Module, Tensor};
 use candle_nn::{linear, Linear, VarBuilder};
 

@@ -132,6 +132,10 @@ impl<'a> Tree<'a> {
                 let proba_tensor = network.forward_embedding_actor(
                     &card_tensor.unsqueeze(0)?,
                     &action_tensor.unsqueeze(0)?,
+                    &AgentNetwork::valid_actions_mask_to_tensor(
+                        &valid_actions_mask,
+                        card_tensor.device(),
+                    )?,
                 )?;
 
                 let valid_actions_mask = state.get_valid_actions_mask();
@@ -244,16 +248,16 @@ impl<'a> Tree<'a> {
         let action_count = self.action_config.postflop_raise_sizes.len() + 3;
         let mut result: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 13]; action_count];
         let mut count: Vec<Vec<Vec<u32>>> = vec![vec![vec![0; 13]; 13]; action_count];
-        let mut valid_action_mask: Vec<bool> = self
+        let mut valid_actions_mask: Vec<bool> = self
             .action_config
             .preflop_raise_sizes
             .iter()
             .map(|&x| x > 0.0)
             .collect();
 
-        valid_action_mask.insert(0, true);
-        valid_action_mask.insert(0, true);
-        valid_action_mask.push(true);
+        valid_actions_mask.insert(0, true);
+        valid_actions_mask.insert(0, true);
+        valid_actions_mask.push(true);
 
         // Iterate through card combinations
         for i in 0..52 {
@@ -285,7 +289,14 @@ impl<'a> Tree<'a> {
                 let card_tensor = Tensor::new(card_vecs, device)?.unsqueeze(0)?;
                 let action_tensor = Tensor::new(action_vecs, device)?.unsqueeze(0)?;
 
-                let proba_tensor = network.forward_embedding_actor(&card_tensor, &action_tensor)?;
+                let proba_tensor = network.forward_embedding_actor(
+                    &card_tensor,
+                    &action_tensor,
+                    &AgentNetwork::valid_actions_mask_to_tensor(
+                        &valid_actions_mask,
+                        card_tensor.device(),
+                    )?,
+                )?;
 
                 let is_suited = suit1 == suit2;
 
@@ -297,7 +308,7 @@ impl<'a> Tree<'a> {
                 // Normalize probs
                 for i in 0..probas.len() {
                     if no_invalid_for_traverser
-                        && (i >= valid_action_mask.len() || !valid_action_mask[i])
+                        && (i >= valid_actions_mask.len() || !valid_actions_mask[i])
                     {
                         probas[i] = 0.0;
                     }
@@ -310,14 +321,14 @@ impl<'a> Tree<'a> {
                         *p /= sum;
                     }
                 } else {
-                    // Count positive values in valid_action_mask
+                    // Count positive values in valid_actions_mask
                     let true_count = if no_invalid_for_traverser {
-                        valid_action_mask.iter().filter(|&&x| x).count()
+                        valid_actions_mask.iter().filter(|&&x| x).count()
                     } else {
                         probas.len()
                     };
                     for (i, p) in probas.iter_mut().enumerate() {
-                        if i < valid_action_mask.len() && valid_action_mask[i] {
+                        if i < valid_actions_mask.len() && valid_actions_mask[i] {
                             *p = 1.0 / (true_count as f32);
                         }
                     }
@@ -336,7 +347,7 @@ impl<'a> Tree<'a> {
         }
 
         for action_index in 0..action_count {
-            if no_invalid_for_traverser && !valid_action_mask[action_index] {
+            if no_invalid_for_traverser && !valid_actions_mask[action_index] {
                 continue;
             }
             println!();
@@ -495,6 +506,10 @@ impl<'a> Tree<'a> {
                 let proba_tensor = network.forward_embedding_actor(
                     &card_tensor.unsqueeze(0)?,
                     &action_tensor.unsqueeze(0)?,
+                    &AgentNetwork::valid_actions_mask_to_tensor(
+                        &gs.get_valid_actions_mask(),
+                        card_tensor.device(),
+                    )?,
                 )?;
 
                 gs.create_children();
@@ -514,7 +529,7 @@ impl<'a> Tree<'a> {
                         .history
                         .last()
                         .unwrap()
-                        .to_print_string(),
+                        ._to_print_string(),
                     gs.get_state_data().bets[p_to_move as usize],
                     gs.get_state_data().stacks[p_to_move as usize],
                 );

@@ -16,7 +16,7 @@ pub struct Action {
 }
 
 impl Action {
-    pub fn to_print_string(&self) -> String {
+    pub fn _to_print_string(&self) -> String {
         match self.action_type {
             ActionType::None => String::from("None"),
             ActionType::Fold => String::from("Fold"),

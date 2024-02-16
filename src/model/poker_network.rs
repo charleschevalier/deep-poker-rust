@@ -1,7 +1,6 @@
 use super::actor_network::ActorNetwork;
 use super::critic_network::CriticNetwork;
 use super::siamese_network_conv::SiameseNetworkConv;
-use super::siamese_network_linear::SiameseNetworkLinear;
 use crate::game::action::ActionConfig;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::{VarBuilder, VarMap};
@@ -61,9 +60,9 @@ impl<'a> PokerNetwork<'a> {
             false,
         )?;
 
-        let var_map_actor = self.var_map.data().lock().unwrap();
+        let var_map = self.var_map.data().lock().unwrap();
         // We perform a deep copy of the varmap using Tensor::copy on Var
-        var_map_actor.iter().for_each(|(k, v)| {
+        var_map.iter().for_each(|(k, v)| {
             copy_net
                 .var_map
                 .set_one(k, v.as_tensor().copy().unwrap())
@@ -77,9 +76,10 @@ impl<'a> PokerNetwork<'a> {
         &self,
         card_tensor: &Tensor,
         action_tensor: &Tensor,
+        mask: &Tensor,
     ) -> Result<Tensor, Box<dyn std::error::Error>> {
         let x = self.siamese_network.forward(card_tensor, action_tensor)?;
-        self.actor_network.forward(&x)
+        self.actor_network.forward(&x, mask)
     }
 
     pub fn forward_embedding(
@@ -90,8 +90,12 @@ impl<'a> PokerNetwork<'a> {
         Ok(self.siamese_network.forward(card_tensor, action_tensor)?)
     }
 
-    pub fn forward_actor(&self, x: &Tensor) -> Result<Tensor, Box<dyn std::error::Error>> {
-        self.actor_network.forward(x)
+    pub fn forward_actor(
+        &self,
+        x: &Tensor,
+        mask: &Tensor,
+    ) -> Result<Tensor, Box<dyn std::error::Error>> {
+        self.actor_network.forward(x, mask)
     }
 
     pub fn forward_critic(&self, x: &Tensor) -> Result<Option<Tensor>, Box<dyn std::error::Error>> {

@@ -225,22 +225,35 @@ impl<'a> Trainer<'a> {
                 assert!(action_input_tensor.dim(0)? == step_cnt);
             }
 
-            // println!("Card input tensor: {:?}", card_input_tensor.shape());
-            // println!("Action input tensor: {:?}", action_input_tensor.shape());
+            // Get action indexes
+            let action_indexes_tensor = self.get_action_indexes(&hand_states)?;
+
+            // Build masks to apply before softmax for invalid actions
+            let mut valid_action_masks = Vec::new();
+            for hand_state in hand_states.iter() {
+                for action_state in hand_state.get_traverser_action_states().iter() {
+                    let mask = action_state
+                        .valid_actions_mask
+                        .iter()
+                        .map(|x| if *x { 0.0 } else { -f32::MAX })
+                        .collect::<Vec<f32>>();
+                    valid_action_masks.push(mask);
+                }
+            }
+
+            let valid_action_mask_tensor = Tensor::new(valid_action_masks, &self.device)?;
 
             // Run all states through network
             let embedding =
                 trained_network.forward_embedding(&card_input_tensor, &action_input_tensor)?;
-            let base_actor_outputs = trained_network.forward_actor(&embedding)?;
+            let base_actor_outputs =
+                trained_network.forward_actor(&embedding, &valid_action_mask_tensor)?;
             let base_critic_outputs = trained_network.forward_critic(&embedding)?;
 
-            // Get action probabilities for actions taken by the agent
-            let old_probs_raw: Vec<Vec<f32>> = base_actor_outputs.to_vec2()?;
-            let old_probs_log_tensor = Tensor::new(
-                self.get_action_probs(&hand_states, &old_probs_raw),
-                &self.device,
-            )?
-            .log()?;
+            let old_probs_log_tensor = base_actor_outputs
+                .gather(&action_indexes_tensor, 1)?
+                .squeeze(1)?
+                .log()?;
 
             // Calculate advantage GAE for each hand state
             let mut advantage_gae: Vec<f32> = Vec::new();
@@ -270,22 +283,23 @@ impl<'a> Trainer<'a> {
 
             let advantage_tensor = Tensor::new(advantage_gae, &self.device)?;
 
-            // Get action indexes
-            let action_indexes_tensor = self.get_action_indexes(&hand_states)?;
-
             for _update_step in 0..self.trainer_config.update_step {
                 // Get embedding
                 let embedding =
                     trained_network.forward_embedding(&card_input_tensor, &action_input_tensor)?;
 
                 // Run actor
-                let actor_outputs = trained_network.forward_actor(&embedding)?;
-                let probs_tensor = actor_outputs.gather(&action_indexes_tensor, 1)?;
+                let actor_outputs =
+                    trained_network.forward_actor(&embedding, &valid_action_mask_tensor)?;
+                let probs_log_tensor = actor_outputs
+                    .gather(&action_indexes_tensor, 1)?
+                    .squeeze(1)?
+                    .log()?;
 
                 // Get trinal clip PPO
                 let policy_loss = self.get_trinal_clip_policy_loss(
                     &advantage_tensor,
-                    &probs_tensor.squeeze(1)?.log()?,
+                    &probs_log_tensor,
                     &old_probs_log_tensor,
                 );
 
@@ -391,53 +405,6 @@ impl<'a> Trainer<'a> {
         }
 
         Ok(())
-    }
-
-    fn get_action_probs(&self, hand_states: &[HandState], probs_raw: &[Vec<f32>]) -> Vec<f32> {
-        let mut probs = Vec::new();
-        let mut index: usize = 0;
-
-        for hand_state in hand_states.iter() {
-            for action_state in hand_state.get_traverser_action_states().iter() {
-                // Apply valid_actions_mask to probs
-                let mut action_probs = probs_raw[index].clone();
-                for i in 0..action_probs.len() {
-                    if i >= action_state.valid_actions_mask.len()
-                        || !action_state.valid_actions_mask[i]
-                    {
-                        action_probs[i] = 0.0;
-                    }
-                }
-
-                // Normalize probas
-                let sum_norm: f32 = action_probs.iter().sum();
-                if sum_norm > 0.0 {
-                    for p in &mut action_probs {
-                        *p /= sum_norm;
-                    }
-                } else {
-                    // Count positive values in valid_action_mask
-                    let true_count = action_state
-                        .valid_actions_mask
-                        .iter()
-                        .filter(|&&x| x)
-                        .count();
-
-                    for (i, p) in action_probs.iter_mut().enumerate() {
-                        if i < action_state.valid_actions_mask.len()
-                            && action_state.valid_actions_mask[i]
-                        {
-                            *p = 1.0 / (true_count as f32);
-                        }
-                    }
-                }
-
-                probs.push(action_probs[action_state.action_taken_index]);
-                index += 1;
-            }
-        }
-
-        probs
     }
 
     fn get_action_indexes(&self, hand_states: &[HandState]) -> Result<Tensor, candle_core::Error> {

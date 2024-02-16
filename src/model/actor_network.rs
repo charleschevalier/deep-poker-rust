@@ -27,10 +27,11 @@ impl ActorNetwork {
         })
     }
 
-    pub fn forward(&self, x: &Tensor) -> Result<Tensor, Box<dyn std::error::Error>> {
+    pub fn forward(&self, x: &Tensor, mask: &Tensor) -> Result<Tensor, Box<dyn std::error::Error>> {
         let mut y = self.linear_1.forward(x)?;
         y = y.relu()?;
         y = self.linear_2.forward(&y)?;
+        y = (y + mask)?;
         y = candle_nn::ops::softmax(&y, candle_core::D::Minus1)?;
         Ok(y)
     }

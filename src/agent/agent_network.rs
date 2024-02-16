@@ -16,7 +16,7 @@ impl<'a> Agent<'a> for AgentNetwork<'a> {
     fn choose_action(
         &self,
         hand_state: &HandState,
-        valid_action_mask: &[bool],
+        valid_actions_mask: &[bool],
         street: u8,
         action_config: &crate::game::action::ActionConfig,
         device: &candle_core::Device,
@@ -28,11 +28,13 @@ impl<'a> Agent<'a> for AgentNetwork<'a> {
             hand_state.action_states.len(),
         )?;
 
-        let proba_tensor = self
-            .network
-            .forward_embedding_actor(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
+        let proba_tensor = self.network.forward_embedding_actor(
+            &card_tensor.unsqueeze(0)?,
+            &action_tensor.unsqueeze(0)?,
+            &AgentNetwork::valid_actions_mask_to_tensor(&valid_actions_mask, device)?,
+        )?;
 
-        Self::choose_action_from_net(&proba_tensor, valid_action_mask, true)
+        Self::choose_action_from_net(&proba_tensor, valid_actions_mask, true)
     }
 }
 
@@ -47,13 +49,13 @@ impl<'a> AgentNetwork<'a> {
 
     pub fn choose_action_from_net(
         proba_tensor: &Tensor,
-        valid_action_mask: &[bool],
+        valid_actions_mask: &[bool],
         no_invalid: bool,
     ) -> Result<usize, Box<dyn std::error::Error>> {
         // Apply valid action mask to tensor
         let mut probas = proba_tensor.squeeze(0)?.to_vec1()?;
         for i in 0..probas.len() {
-            if no_invalid && (i >= valid_action_mask.len() || !valid_action_mask[i]) {
+            if no_invalid && (i >= valid_actions_mask.len() || !valid_actions_mask[i]) {
                 probas[i] = 0.0;
             }
         }
@@ -65,14 +67,14 @@ impl<'a> AgentNetwork<'a> {
                 *p /= sum_norm;
             }
         } else {
-            // Count positive values in valid_action_mask
+            // Count positive values in valid_actions_mask
             let true_count = if no_invalid {
-                valid_action_mask.iter().filter(|&&x| x).count()
+                valid_actions_mask.iter().filter(|&&x| x).count()
             } else {
                 probas.len()
             };
             for (i, p) in probas.iter_mut().enumerate() {
-                if i < valid_action_mask.len() && valid_action_mask[i] {
+                if i < valid_actions_mask.len() && valid_actions_mask[i] {
                     *p = 1.0 / (true_count as f32);
                 }
             }
@@ -94,7 +96,7 @@ impl<'a> AgentNetwork<'a> {
         let action_index = distribution.sample(&mut rng);
 
         if no_invalid
-            && (action_index >= valid_action_mask.len() || !valid_action_mask[action_index])
+            && (action_index >= valid_actions_mask.len() || !valid_actions_mask[action_index])
         {
             // println!("Invalid action index: {}", action_index);
             // println!("Probas: {:?}", probas);
@@ -102,5 +104,16 @@ impl<'a> AgentNetwork<'a> {
         }
 
         Ok(action_index)
+    }
+
+    pub fn valid_actions_mask_to_tensor(
+        valid_actions_mask: &[bool],
+        device: &candle_core::Device,
+    ) -> Result<Tensor, Box<dyn std::error::Error>> {
+        let vals = valid_actions_mask
+            .iter()
+            .map(|x| if *x { 0.0 } else { -f32::MAX })
+            .collect::<Vec<f32>>();
+        Ok(Tensor::new(vals, device)?)
     }
 }
