@@ -28,9 +28,9 @@ impl<'a> Agent<'a> for AgentNetwork<'a> {
             hand_state.action_states.len(),
         )?;
 
-        let (proba_tensor, _) = self
+        let proba_tensor = self
             .network
-            .forward(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
+            .forward_embedding_actor(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
 
         Self::choose_action_from_net(&proba_tensor, valid_action_mask, true)
     }

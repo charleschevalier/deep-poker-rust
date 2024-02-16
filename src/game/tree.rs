@@ -129,8 +129,10 @@ impl<'a> Tree<'a> {
                     hand_state.action_states.len(),
                 )?;
 
-                let (proba_tensor, _) =
-                    network.forward(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
+                let proba_tensor = network.forward_embedding_actor(
+                    &card_tensor.unsqueeze(0)?,
+                    &action_tensor.unsqueeze(0)?,
+                )?;
 
                 let valid_actions_mask = state.get_valid_actions_mask();
                 AgentNetwork::choose_action_from_net(
@@ -283,7 +285,7 @@ impl<'a> Tree<'a> {
                 let card_tensor = Tensor::new(card_vecs, device)?.unsqueeze(0)?;
                 let action_tensor = Tensor::new(action_vecs, device)?.unsqueeze(0)?;
 
-                let (proba_tensor, _) = network.forward(&card_tensor, &action_tensor)?;
+                let proba_tensor = network.forward_embedding_actor(&card_tensor, &action_tensor)?;
 
                 let is_suited = suit1 == suit2;
 
@@ -490,8 +492,10 @@ impl<'a> Tree<'a> {
                     self.hand_state.as_ref().unwrap().action_states.len(),
                 )?;
 
-                let (proba_tensor, _) =
-                    network.forward(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
+                let proba_tensor = network.forward_embedding_actor(
+                    &card_tensor.unsqueeze(0)?,
+                    &action_tensor.unsqueeze(0)?,
+                )?;
 
                 gs.create_children();
 

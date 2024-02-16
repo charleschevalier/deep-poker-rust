@@ -7,7 +7,7 @@ use crate::agent::agent_pool::AgentPool;
 use crate::game::action::ActionConfig;
 use crate::game::hand_state::HandState;
 use crate::game::tree::Tree;
-use candle_core::{Device, NdArray, Tensor};
+use candle_core::{Device, Tensor};
 use candle_nn::Optimizer;
 
 use std::path::Path;
@@ -90,29 +90,28 @@ impl<'a> Trainer<'a> {
             // TODO: Also load 5 previous iterations as agents
         }
 
-        let policy_data: Vec<candle_core::Var>;
-        let critic_data: Vec<candle_core::Var>;
-
-        {
-            // Here, Var::clone is not a deep copy, but a shallow copy. That's what we need for the
-            // optimizer to work properly.
-            let var_data = trained_network.var_map.data().lock().unwrap();
-
-            policy_data = var_data
+        let filter_var_map_by_prefix = |varmap: &candle_nn::VarMap, prefix: &str| {
+            varmap
+                .data()
+                .lock()
+                .unwrap()
                 .iter()
-                .filter(|(k, _)| k.starts_with("siamese") || k.starts_with("actor"))
-                .map(|(_, v)| v.clone())
-                .collect::<Vec<_>>();
+                .filter_map(|(name, var)| name.starts_with(prefix).then_some(var.clone()))
+                .collect::<Vec<candle_core::Var>>()
+        };
 
-            critic_data = var_data
-                .iter()
-                .filter(|(k, _)| k.starts_with("siamese") || k.starts_with("critic"))
-                .map(|(_, v)| v.clone())
-                .collect::<Vec<_>>();
-        }
-
-        let mut optimizer_policy = candle_nn::AdamW::new_lr(policy_data, 3e-4)?;
-        let mut optimizer_critic = candle_nn::AdamW::new_lr(critic_data, 3e-4)?;
+        let mut optimizer_embedding = candle_nn::AdamW::new_lr(
+            filter_var_map_by_prefix(&trained_network.var_map, "siamese"),
+            3e-4,
+        )?;
+        let mut optimizer_policy = candle_nn::AdamW::new_lr(
+            filter_var_map_by_prefix(&trained_network.var_map, "actor"),
+            3e-4,
+        )?;
+        let mut optimizer_critic = candle_nn::AdamW::new_lr(
+            filter_var_map_by_prefix(&trained_network.var_map, "critic"),
+            3e-4,
+        )?;
 
         for iteration in (latest_iteration as usize + 1)..self.trainer_config.max_iters {
             println!("Iteration: {}", iteration);
@@ -230,8 +229,10 @@ impl<'a> Trainer<'a> {
             // println!("Action input tensor: {:?}", action_input_tensor.shape());
 
             // Run all states through network
-            let (base_actor_outputs, base_critic_outputs) =
-                trained_network.forward(&card_input_tensor, &action_input_tensor)?;
+            let embedding =
+                trained_network.forward_embedding(&card_input_tensor, &action_input_tensor)?;
+            let base_actor_outputs = trained_network.forward_actor(&embedding)?;
+            let base_critic_outputs = trained_network.forward_critic(&embedding)?;
 
             // Get action probabilities for actions taken by the agent
             let old_probs_raw: Vec<Vec<f32>> = base_actor_outputs.to_vec2()?;
@@ -264,31 +265,39 @@ impl<'a> Trainer<'a> {
                 assert!(advantage_gae.len() == step_cnt);
 
                 // Normalize advantage_gae
-                // Self::normalize_mean_std(&mut advantage_gae);
+                Self::normalize_mean_std(&mut advantage_gae);
             }
 
             let advantage_tensor = Tensor::new(advantage_gae, &self.device)?;
 
+            // Get action indexes
+            let action_indexes_tensor = self.get_action_indexes(&hand_states)?;
+
             for _update_step in 0..self.trainer_config.update_step {
-                // Run all states through network
-                let (actor_outputs, critic_outputs) =
-                    trained_network.forward(&card_input_tensor, &action_input_tensor)?;
+                // Get embedding
+                let embedding =
+                    trained_network.forward_embedding(&card_input_tensor, &action_input_tensor)?;
 
-                let probs_raw: Vec<Vec<f32>> = actor_outputs.to_vec2()?;
-                let probs = self.get_action_probs(&hand_states, &probs_raw);
-
-                let critic_outputs_vec: Vec<f32> =
-                    critic_outputs.as_ref().unwrap().squeeze(1)?.to_vec1()?;
-                println!("critic_outputs_vec: {:?}", critic_outputs_vec.len());
-                let gamma_rewards_vec: Vec<f32> = gamma_rewards_tensor.to_vec1()?;
-                println!("gamma_rewards_vec: {:?}", gamma_rewards_vec.len());
+                // Run actor
+                let actor_outputs = trained_network.forward_actor(&embedding)?;
+                let probs_tensor = actor_outputs.gather(&action_indexes_tensor, 1)?;
 
                 // Get trinal clip PPO
                 let policy_loss = self.get_trinal_clip_policy_loss(
                     &advantage_tensor,
-                    &Tensor::new(probs, &self.device)?.log()?,
+                    &probs_tensor.squeeze(1)?.log()?,
                     &old_probs_log_tensor,
                 );
+
+                println!(
+                    "Policy loss: {:?}",
+                    policy_loss.as_ref().unwrap().to_scalar::<f32>()
+                );
+
+                let mut gradients_policy = policy_loss?.backward()?;
+
+                // Get critic output
+                let critic_outputs = trained_network.forward_critic(&embedding)?;
 
                 let value_loss = self.get_trinal_clip_value_loss(
                     critic_outputs.as_ref().unwrap(),
@@ -297,24 +306,34 @@ impl<'a> Trainer<'a> {
                     &min_rewards_tensor,
                 );
 
-                // println!("Update step: {}", update_step);
-                println!(
-                    "Policy loss: {:?}",
-                    policy_loss.as_ref().unwrap().to_scalar::<f32>()
-                );
                 println!(
                     "Value loss: {:?}",
                     value_loss.as_ref().unwrap().to_scalar::<f32>()
                 );
 
-                // let total_loss = policy_loss?.add(&value_loss?)?;
-                // optimizer_policy.backward_step(&total_loss)?;
-                policy_loss?.backward();
+                let gradients_value = value_loss?.backward()?;
 
-                // optimizer_policy.backward_step(&policy_loss?)?;
-                // optimizer_critic.backward_step(&value_loss?)?;
+                // Do backprop on actor & critic networks
+                optimizer_policy.step(&gradients_policy)?;
+                optimizer_critic.step(&gradients_value)?;
 
-                // trained_network.print_weights();
+                trained_network
+                    .var_map
+                    .data()
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .for_each(|(k, v)| {
+                        if k.starts_with("siamese") {
+                            let grad_policy = gradients_policy.get(v).unwrap();
+                            let grad_value = gradients_value.get(v).unwrap();
+                            let grad_weighted =
+                                (grad_policy * 0.5).unwrap() + (grad_value * 0.5).unwrap();
+                            gradients_policy.insert(v, grad_weighted.unwrap());
+                        }
+                    });
+
+                optimizer_embedding.step(&gradients_policy)?;
             }
             self.tree.print_first_actions(
                 &trained_network,
@@ -421,6 +440,18 @@ impl<'a> Trainer<'a> {
         probs
     }
 
+    fn get_action_indexes(&self, hand_states: &[HandState]) -> Result<Tensor, candle_core::Error> {
+        let mut result = Vec::new();
+
+        for hand_state in hand_states.iter() {
+            for action_state in hand_state.get_traverser_action_states().iter() {
+                result.push(action_state.action_taken_index as u32);
+            }
+        }
+
+        Tensor::new(result, &self.device)?.unsqueeze(1)
+    }
+
     fn calculate_advantage_gae(
         &self,
         rewards: &[f32],
@@ -445,7 +476,7 @@ impl<'a> Trainer<'a> {
         (advantage[0..size].to_vec(), value_target)
     }
 
-    fn get_discounted_rewards(&self, hand_rewards: &Vec<f32>, gamma: f32) -> Vec<f32> {
+    fn get_discounted_rewards(&self, hand_rewards: &[f32], gamma: f32) -> Vec<f32> {
         let mut rewards = Vec::new();
         let mut reward = 0.0;
 
@@ -478,25 +509,14 @@ impl<'a> Trainer<'a> {
         let clip2 = ratio
             .copy()?
             .clamp(&clip1, self.trainer_config.ppo_delta_1)?;
+
         let trinal_clip_ppo = (clip2.copy() * advantages)?;
 
         // Get negative advantage values
         let neg = advantages.lt(0.0)?;
 
-        let ppo_vec: Vec<f32> = ppo.to_vec1()?;
-        let trinal_clip_ppo_vec: Vec<f32> = trinal_clip_ppo.to_vec1()?;
-
         // Apply trinal-clip PPO for negative advantages
         let policy_loss = neg.where_cond(&trinal_clip_ppo, &ppo)?;
-
-        // let ratio_vec: Vec<f32> = ratio.to_vec1()?;
-        // let policy_loss_vec: Vec<f32> = policy_loss.copy()?.to_vec1()?;
-        // let neg_vec: Vec<u8> = neg.to_vec1()?;
-        // let advantages_vec: Vec<f32> = advantages.to_vec1()?;
-
-        // println!("PPO: {:?}", ppo_vec.shape());
-        // println!("Trinal-clip PPO: {:?}", trinal_clip_ppo_vec.shape());
-        // println!("Policy loss: {:?}", policy_loss_vec.shape());
 
         // NOTE: we take the negative min of the surrogate losses because we're trying to maximize
         // the performance function, but Adam minimizes the loss. So minimizing the negative
@@ -512,18 +532,7 @@ impl<'a> Trainer<'a> {
         min_bet: &Tensor,
     ) -> Result<Tensor, candle_core::Error> {
         let clipped = rewards.copy()?.clamp(min_bet, max_bet)?;
-
-        let clipped_vec: Vec<f32> = clipped.to_vec1()?;
-
         let diff = (clipped - values.squeeze(1))?;
-
-        let values_vec: Vec<f32> = values.squeeze(1)?.to_vec1()?;
-        let diff_vec: Vec<f32> = diff.to_vec1()?;
-
-        // println!("Clipped: {:?}", clipped_vec);
-        // println!("Values: {:?}", values_vec);
-        // println!("Diff: {:?}", diff_vec);
-
         (diff.as_ref() * diff.as_ref())?.mean(0)
     }
 
