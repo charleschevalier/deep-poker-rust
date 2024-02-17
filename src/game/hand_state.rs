@@ -123,6 +123,15 @@ impl HandState {
                 action_cnt = 0;
             }
 
+            if current_street as usize * action_config.max_actions_per_street as usize + action_cnt
+                >= 4 * action_config.max_actions_per_street as usize
+            {
+                println!(
+                    "TOO much actions in HandState: current_street: {}, action_cnt: {}, action_state_it: {:?}",
+                    current_street, action_cnt, action_state_it
+                );
+            }
+
             // Set player action in tensor
             action_vecs[current_street as usize * action_config.max_actions_per_street as usize
                 + action_cnt][action_state_it.player_to_move as usize]

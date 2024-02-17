@@ -53,52 +53,10 @@ impl<'a> Trainer<'a> {
 
         let mut agent_pool = AgentPool::new();
 
-        // List files in output path
-        let trained_network_path = Path::new(&self.output_path);
-        let trained_network_files = trained_network_path.read_dir()?;
-        let mut latest_iteration = 0;
+        // Load previous training
+        let latest_iteration = self.load_existing(&mut trained_network, &mut agent_pool)?;
 
-        for file in trained_network_files {
-            let file = file?;
-            let file_name = file.file_name();
-            let file_name = file_name.to_str().unwrap();
-            let file_name = file_name.split('_').collect::<Vec<&str>>();
-
-            if file_name.len() > 2 {
-                let split = file_name[2].split('.').collect::<Vec<&str>>();
-                if (split.len() == 2) && (split[1] == "pt") {
-                    let iteration = split[0].parse::<u32>()?;
-                    if iteration > latest_iteration {
-                        latest_iteration = iteration;
-                    }
-                }
-            }
-        }
-
-        if latest_iteration > 0 {
-            trained_network.var_map.load(
-                trained_network_path.join(format!("poker_network_{}.pt", latest_iteration)),
-            )?;
-
-            if latest_iteration >= 100 {
-                let delta = latest_iteration % 100;
-                let end = latest_iteration - delta;
-                let start = std::cmp::max(100, end as i32 - 400);
-                for i in (start as u32..end + 100).step_by(100) {
-                    let mut network = PokerNetwork::new(
-                        self.player_cnt,
-                        self.action_config,
-                        self.device.clone(),
-                        false,
-                    )?;
-                    network
-                        .var_map
-                        .load(trained_network_path.join(format!("poker_network_{}.pt", i)))?;
-                    agent_pool.add_agent(Box::new(AgentNetwork::new(network)));
-                }
-            }
-        }
-
+        // Build optimizers
         let filter_var_map_by_prefix = |varmap: &candle_nn::VarMap, prefix: &[&str]| {
             varmap
                 .data()
@@ -123,76 +81,12 @@ impl<'a> Trainer<'a> {
             1e-5,
         )?;
 
+        // Main training loop
         for iteration in (latest_iteration as usize + 1)..self.trainer_config.max_iters {
             println!("Iteration: {}", iteration);
 
-            let mut hand_states = Vec::new();
-
-            {
-                // Clone trained network for inference
-                let inference_network = trained_network.clone()?;
-
-                for _ in 0..self.trainer_config.hands_per_player_per_iteration {
-                    for traverser in 0..self.player_cnt {
-                        let mut agents = Vec::new();
-                        for p in 0..self.player_cnt {
-                            let agent = if p != traverser {
-                                let (_, ag) = agent_pool.get_agent();
-                                Some(ag)
-                            } else {
-                                None
-                            };
-                            agents.push(agent);
-                        }
-                        // Select agents
-                        self.tree.traverse(
-                            traverser,
-                            &inference_network,
-                            &agents,
-                            &self.device,
-                            self.trainer_config.no_invalid_for_traverser,
-                        )?;
-
-                        // Make sure the hand state has at least one state for the traverser, and that we
-                        // do not have too much actions per street
-                        let hs = self.tree.hand_state.clone();
-                        if let Some(hs) = hs {
-                            // Count number of action states for traverser
-                            if hs.get_traverser_action_states().is_empty() {
-                                continue;
-                            }
-                            // Count number of action per street
-                            let mut action_cnt = 0;
-                            let mut too_much = false;
-                            let mut street = 0;
-                            for action_state in hs.get_traverser_action_states() {
-                                if action_state.street == street {
-                                    action_cnt += 1;
-                                } else {
-                                    street = action_state.street;
-                                    action_cnt = 0;
-                                }
-
-                                if action_cnt > (self.action_config.player_count - 1) * 3 {
-                                    too_much = true;
-                                    break;
-                                }
-                            }
-
-                            if too_much {
-                                continue;
-                            }
-
-                            hand_states.push(hs);
-                        }
-
-                        // // Print progress
-                        // if hand_states.len() % 100 == 0 {
-                        //     println!("Hand states: {}", hand_states.len());
-                        // }
-                    }
-                }
-            }
+            // Rollout hands and build hand states
+            let mut hand_states = self.build_hand_states(&trained_network, &agent_pool)?;
 
             // Calculate cumulative rewards for each hand state
             let mut rewards_by_hand_state = Vec::new();
@@ -500,7 +394,7 @@ impl<'a> Trainer<'a> {
             }
 
             self.tree.print_first_actions(
-                &trained_network.clone()?,
+                &trained_network.clone(),
                 &self.device,
                 self.trainer_config.no_invalid_for_traverser,
             )?;
@@ -513,7 +407,7 @@ impl<'a> Trainer<'a> {
             //     )?;
             // }
 
-            if iteration > 0 && iteration % 10 == 0 {
+            if iteration > 0 && iteration % self.trainer_config.save_interval as usize == 0 {
                 trained_network.var_map.save(
                     Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration)),
                 )?;
@@ -525,12 +419,96 @@ impl<'a> Trainer<'a> {
             }
 
             // Put a new agent in the pool every 100 iterations
-            if iteration % 100 == 0 {
-                agent_pool.add_agent(Box::new(AgentNetwork::new(trained_network.clone()?)));
+            if iteration % self.trainer_config.new_agent_interval as usize == 0 {
+                agent_pool.add_agent(Box::new(AgentNetwork::new(trained_network.clone())));
             }
         }
 
         Ok(())
+    }
+
+    fn build_hand_states(
+        &mut self,
+        trained_network: &PokerNetwork,
+        agent_pool: &AgentPool,
+    ) -> Result<Vec<HandState>, Box<dyn std::error::Error>> {
+        let mut hand_states = Vec::new();
+
+        // Clone trained network for inference
+        let inference_network = trained_network.clone();
+
+        for _ in 0..self.trainer_config.hands_per_player_per_iteration {
+            for traverser in 0..self.player_cnt {
+                // Select agents
+                let mut agents = Vec::new();
+                for p in 0..self.player_cnt {
+                    let agent = if p != traverser {
+                        let (_, ag) = agent_pool.get_agent();
+                        Some(ag)
+                    } else {
+                        None
+                    };
+                    agents.push(agent);
+                }
+
+                // Traverse tree
+                if self
+                    .tree
+                    .traverse(
+                        traverser,
+                        &inference_network,
+                        &agents,
+                        &self.device,
+                        self.trainer_config.no_invalid_for_traverser,
+                    )
+                    .is_err()
+                {
+                    continue;
+                }
+
+                // Make sure the hand state has at least one state for the traverser, and that we
+                // do not have too much actions per street. Action count should already be checked
+                // in the tree.traverse method, so this check may be removed in the future.
+                let hs = self.tree.hand_state.clone();
+                if let Some(hs) = hs {
+                    // Count number of action states for traverser
+                    if hs.get_traverser_action_states().is_empty() {
+                        continue;
+                    }
+                    // Count number of action per street
+                    let mut action_cnt = 0;
+                    let mut too_much = false;
+                    let mut street = 0;
+                    for action_state in hs.action_states.iter() {
+                        if action_state.street == street {
+                            action_cnt += 1;
+                        } else {
+                            street = action_state.street;
+                            action_cnt = 0;
+                        }
+
+                        if action_cnt >= self.action_config.max_actions_per_street {
+                            too_much = true;
+                            println!("Trainer: WARNING Too much actions per street, we shouldn't be here.");
+                            break;
+                        }
+                    }
+
+                    if too_much {
+                        continue;
+                    }
+
+                    hand_states.push(hs);
+                }
+
+                // // Print progress
+                // if hand_states.len() % 100 == 0 {
+                //     println!("Hand states: {}", hand_states.len());
+                // }
+            }
+        }
+
+        Ok(hand_states)
     }
 
     fn get_action_indexes(&self, hand_states: &[HandState]) -> Result<Tensor, candle_core::Error> {
@@ -639,5 +617,64 @@ impl<'a> Trainer<'a> {
         for x in vec.iter_mut() {
             *x = (*x - mean) / (std_dev + 1e-10);
         }
+    }
+
+    fn load_existing(
+        &self,
+        trained_network: &mut PokerNetwork,
+        agent_pool: &mut AgentPool<'a>,
+    ) -> Result<u32, Box<dyn std::error::Error>> {
+        // List files in output path
+        let trained_network_path = Path::new(&self.output_path);
+        let trained_network_files = trained_network_path.read_dir()?;
+        let mut latest_iteration = 0;
+
+        for file in trained_network_files {
+            let file = file?;
+            let file_name = file.file_name();
+            let file_name = file_name.to_str().unwrap();
+            let file_name = file_name.split('_').collect::<Vec<&str>>();
+
+            if file_name.len() > 2 {
+                let split = file_name[2].split('.').collect::<Vec<&str>>();
+                if (split.len() == 2) && (split[1] == "pt") {
+                    let iteration = split[0].parse::<u32>()?;
+                    if iteration > latest_iteration {
+                        latest_iteration = iteration;
+                    }
+                }
+            }
+        }
+
+        if latest_iteration > 0 {
+            trained_network.var_map.load(
+                trained_network_path.join(format!("poker_network_{}.pt", latest_iteration)),
+            )?;
+
+            if latest_iteration >= self.trainer_config.new_agent_interval {
+                let delta = latest_iteration % self.trainer_config.new_agent_interval;
+                let end = latest_iteration - delta;
+                let start = std::cmp::max(
+                    self.trainer_config.new_agent_interval as i32,
+                    end as i32 - 9 * self.trainer_config.new_agent_interval as i32,
+                );
+                for i in (start as u32..end + self.trainer_config.new_agent_interval)
+                    .step_by(self.trainer_config.new_agent_interval as usize)
+                {
+                    let mut network = PokerNetwork::new(
+                        self.player_cnt,
+                        self.action_config,
+                        self.device.clone(),
+                        false,
+                    )?;
+                    network
+                        .var_map
+                        .load(trained_network_path.join(format!("poker_network_{}.pt", i)))?;
+                    agent_pool.add_agent(Box::new(AgentNetwork::new(network)));
+                }
+            }
+        }
+
+        Ok(latest_iteration)
     }
 }

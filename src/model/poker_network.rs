@@ -53,28 +53,6 @@ impl<'a> PokerNetwork<'a> {
         })
     }
 
-    // Deep copy of the network
-    // The clone is not trainable
-    pub fn clone(&self) -> Result<PokerNetwork, Box<dyn std::error::Error>> {
-        let mut copy_net = Self::new(
-            self.player_cnt,
-            self.action_config,
-            self.device.clone(),
-            false,
-        )?;
-
-        let var_map = self.var_map.data().lock().unwrap();
-        // We perform a deep copy of the varmap using Tensor::copy on Var
-        var_map.iter().for_each(|(k, v)| {
-            copy_net
-                .var_map
-                .set_one(k, v.as_tensor().copy().unwrap())
-                .unwrap();
-        });
-
-        Ok(copy_net)
-    }
-
     pub fn forward_embedding_actor(
         &self,
         card_tensor: &Tensor,
@@ -114,4 +92,28 @@ impl<'a> PokerNetwork<'a> {
     // pub fn _print_weights(&self) {
     //     self.siamese_network._print_weights();
     // }
+}
+
+impl<'a> Clone for PokerNetwork<'a> {
+    // The clone is not trainable
+    fn clone(&self) -> PokerNetwork<'a> {
+        let mut copy_net = Self::new(
+            self.player_cnt,
+            self.action_config,
+            self.device.clone(),
+            false,
+        )
+        .unwrap();
+
+        let var_map = self.var_map.data().lock().unwrap();
+        // We perform a deep copy of the varmap using Tensor::copy on Var
+        var_map.iter().for_each(|(k, v)| {
+            copy_net
+                .var_map
+                .set_one(k, v.as_tensor().copy().unwrap())
+                .unwrap();
+        });
+
+        copy_net
+    }
 }

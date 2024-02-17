@@ -4,13 +4,13 @@ use candle_nn::{conv2d, linear, BatchNorm, Conv2d, Conv2dConfig, Linear, VarBuil
 pub struct SiameseNetworkConv {
     card_conv_layer_1: Conv2d,
     card_conv_layer_2: Conv2d,
-    card_batch_norm: BatchNorm,
+    // card_batch_norm: BatchNorm,
     action_conv_layer_1: Conv2d,
     action_conv_layer_2: Conv2d,
-    action_batch_norm: BatchNorm,
+    // action_batch_norm: BatchNorm,
     merge_layer: Linear,
     output_layer: Linear,
-    output_batch_norm: BatchNorm,
+    // output_batch_norm: BatchNorm,
 }
 
 impl SiameseNetworkConv {
@@ -83,11 +83,11 @@ impl SiameseNetworkConv {
             vb.pp("siamese_card_conv_2"),
         )?;
 
-        let card_batch_norm = candle_nn::batch_norm(
-            6 * conv_factor as usize * conv_factor as usize,
-            1e-3,
-            vb.pp("xxxsiamese_card_batch_norm"),
-        )?;
+        // let card_batch_norm = candle_nn::batch_norm(
+        //     6 * conv_factor as usize * conv_factor as usize,
+        //     1e-3,
+        //     vb.pp("xxxsiamese_card_batch_norm"),
+        // )?;
 
         let action_conv_layer_1 = conv2d(
             max_action_per_street_cnt * 4,
@@ -115,11 +115,11 @@ impl SiameseNetworkConv {
             vb.pp("siamese_action_conv_2"),
         )?;
 
-        let action_batch_norm = candle_nn::batch_norm(
-            max_action_per_street_cnt * 4 * conv_factor as usize * conv_factor as usize,
-            1e-3,
-            vb.pp("xxxsiamese_action_batch_norm"),
-        )?;
+        // let action_batch_norm = candle_nn::batch_norm(
+        //     max_action_per_street_cnt * 4 * conv_factor as usize * conv_factor as usize,
+        //     1e-3,
+        //     vb.pp("xxxsiamese_action_batch_norm"),
+        // )?;
 
         // println!("Action conv shape: {:?}", action_conv.weight().shape());
 
@@ -134,19 +134,19 @@ impl SiameseNetworkConv {
 
         let output_layer = linear(1024, 1024, vb.pp("siamese_output"))?;
 
-        let output_batch_norm =
-            candle_nn::batch_norm(1024, 1e-3, vb.pp("siamese_output_batch_norm"))?;
+        // let output_batch_norm =
+        //     candle_nn::batch_norm(1024, 1e-3, vb.pp("siamese_output_batch_norm"))?;
 
         Ok(SiameseNetworkConv {
             card_conv_layer_1,
             card_conv_layer_2,
-            card_batch_norm,
+            // card_batch_norm,
             action_conv_layer_1,
             action_conv_layer_2,
-            action_batch_norm,
+            // action_batch_norm,
             merge_layer,
             output_layer,
-            output_batch_norm,
+            // output_batch_norm,
         })
     }
 
@@ -190,8 +190,8 @@ impl SiameseNetworkConv {
         let mut merged_output = self.merge_layer.forward(&merged)?;
         merged_output.relu()?;
         merged_output = self.output_layer.forward(&merged_output)?;
-        // merged_output.relu()?;
-        merged_output.apply_t(&self.output_batch_norm, train)?;
+        merged_output.relu()?;
+        // merged_output.apply_t(&self.output_batch_norm, train)?;
 
         Ok(merged_output)
     }

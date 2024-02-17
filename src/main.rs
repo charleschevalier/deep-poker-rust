@@ -17,11 +17,13 @@ fn main() {
 
     let trainer_config = TrainerConfig {
         max_iters: 500000,
-        hands_per_player_per_iteration: 512,
+        hands_per_player_per_iteration: 1024,
         update_step: 32,
         ppo_epsilon: 0.2,
         ppo_delta_1: 3.0,
         no_invalid_for_traverser: true,
+        new_agent_interval: 100,
+        save_interval: 100,
     };
 
     let device = Device::cuda_if_available(0).unwrap();
