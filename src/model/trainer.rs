@@ -52,13 +52,6 @@ impl<'a> Trainer<'a> {
         )?;
 
         let mut agent_pool = AgentPool::new();
-        // let temp_net = PokerNetwork::new(
-        //     self.player_cnt,
-        //     self.action_config,
-        //     self.device.clone(),
-        //     true,
-        // )?;
-        // agent_pool.add_agent(Box::new(AgentNetwork::new(temp_net)));
 
         // List files in output path
         let trained_network_path = Path::new(&self.output_path);
@@ -72,7 +65,7 @@ impl<'a> Trainer<'a> {
             let file_name = file_name.split('_').collect::<Vec<&str>>();
 
             if file_name.len() > 2 {
-                let split = file_name[3].split('.').collect::<Vec<&str>>();
+                let split = file_name[2].split('.').collect::<Vec<&str>>();
                 if (split.len() == 2) && (split[1] == "pt") {
                     let iteration = split[0].parse::<u32>()?;
                     if iteration > latest_iteration {
@@ -87,29 +80,48 @@ impl<'a> Trainer<'a> {
                 trained_network_path.join(format!("poker_network_{}.pt", latest_iteration)),
             )?;
 
-            // TODO: Also load 5 previous iterations as agents
+            if latest_iteration >= 100 {
+                let delta = latest_iteration % 100;
+                let end = latest_iteration - delta;
+                let start = std::cmp::max(100, end - 400);
+                for i in (start..end + 100).step_by(100) {
+                    let mut network = PokerNetwork::new(
+                        self.player_cnt,
+                        self.action_config,
+                        self.device.clone(),
+                        false,
+                    )?;
+                    network
+                        .var_map
+                        .load(trained_network_path.join(format!("poker_network_{}.pt", i)))?;
+                    agent_pool.add_agent(Box::new(AgentNetwork::new(network)));
+                }
+            }
         }
 
-        let filter_var_map_by_prefix = |varmap: &candle_nn::VarMap, prefix: &str| {
-            varmap
+        let filter_var_map_by_prefix = |varmap: &candle_nn::VarMap, prefix: &[&str]| {
+            let test = varmap
                 .data()
                 .lock()
                 .unwrap()
                 .iter()
-                .filter_map(|(name, var)| name.starts_with(prefix).then_some(var.clone()))
-                .collect::<Vec<candle_core::Var>>()
+                .filter(|(name, _)| prefix.iter().any(|&item| name.starts_with(item)))
+                .map(|(_, var)| var.clone())
+                .collect::<Vec<candle_core::Var>>();
+            println!("Test: {:?}", test.len());
+            test
         };
 
         let mut optimizer_embedding = candle_nn::AdamW::new_lr(
-            filter_var_map_by_prefix(&trained_network.var_map, "siamese"),
+            filter_var_map_by_prefix(&trained_network.var_map, &["siamese"]),
             3e-4,
         )?;
         let mut optimizer_policy = candle_nn::AdamW::new_lr(
-            filter_var_map_by_prefix(&trained_network.var_map, "actor"),
+            filter_var_map_by_prefix(&trained_network.var_map, &["actor"]),
             3e-4,
         )?;
         let mut optimizer_critic = candle_nn::AdamW::new_lr(
-            filter_var_map_by_prefix(&trained_network.var_map, "critic"),
+            filter_var_map_by_prefix(&trained_network.var_map, &["critic"]),
             3e-4,
         )?;
 
@@ -118,41 +130,46 @@ impl<'a> Trainer<'a> {
 
             let mut hand_states = Vec::new();
 
-            for _ in 0..self.trainer_config.hands_per_player_per_iteration {
-                for traverser in 0..self.player_cnt {
-                    let mut agents = Vec::new();
-                    for p in 0..self.player_cnt {
-                        let agent = if p != traverser {
-                            let (_, ag) = agent_pool.get_agent();
-                            Some(ag)
-                        } else {
-                            None
-                        };
-                        agents.push(agent);
-                    }
-                    // Select agents
-                    self.tree.traverse(
-                        traverser,
-                        &trained_network,
-                        &agents,
-                        &self.device,
-                        self.trainer_config.no_invalid_for_traverser,
-                    )?;
+            {
+                // Clone trained network for inference
+                let inference_network = trained_network.clone()?;
 
-                    // Make sure the hand state has at least one state for the traverser
-                    let hs = self.tree.hand_state.clone();
-                    if let Some(hs) = hs {
-                        // count number of action states for traverser
-                        if hs.get_traverser_action_states().is_empty() {
-                            continue;
+                for _ in 0..self.trainer_config.hands_per_player_per_iteration {
+                    for traverser in 0..self.player_cnt {
+                        let mut agents = Vec::new();
+                        for p in 0..self.player_cnt {
+                            let agent = if p != traverser {
+                                let (_, ag) = agent_pool.get_agent();
+                                Some(ag)
+                            } else {
+                                None
+                            };
+                            agents.push(agent);
                         }
-                        hand_states.push(hs);
-                    }
+                        // Select agents
+                        self.tree.traverse(
+                            traverser,
+                            &inference_network,
+                            &agents,
+                            &self.device,
+                            self.trainer_config.no_invalid_for_traverser,
+                        )?;
 
-                    // // Print progress
-                    // if hand_states.len() % 100 == 0 {
-                    //     println!("Hand states: {}", hand_states.len());
-                    // }
+                        // Make sure the hand state has at least one state for the traverser
+                        let hs = self.tree.hand_state.clone();
+                        if let Some(hs) = hs {
+                            // count number of action states for traverser
+                            if hs.get_traverser_action_states().is_empty() {
+                                continue;
+                            }
+                            hand_states.push(hs);
+                        }
+
+                        // // Print progress
+                        // if hand_states.len() % 100 == 0 {
+                        //     println!("Hand states: {}", hand_states.len());
+                        // }
+                    }
                 }
             }
 
@@ -190,10 +207,6 @@ impl<'a> Trainer<'a> {
                     rewards_by_hand_state.push(hand_rewards);
                 }
 
-                assert!(min_rewards.len() == step_cnt);
-                assert!(max_rewards.len() == step_cnt);
-                assert!(gamma_rewards.len() == step_cnt);
-
                 min_rewards_tensor = Tensor::new(min_rewards, &self.device)?;
                 max_rewards_tensor = Tensor::new(max_rewards, &self.device)?;
                 gamma_rewards_tensor = Tensor::new(gamma_rewards, &self.device)?;
@@ -220,49 +233,31 @@ impl<'a> Trainer<'a> {
 
                 card_input_tensor = Tensor::cat(&card_input_vec, 0)?;
                 action_input_tensor = Tensor::cat(&action_input_vec, 0)?;
-
-                assert!(card_input_tensor.dim(0)? == step_cnt);
-                assert!(action_input_tensor.dim(0)? == step_cnt);
             }
 
             // Get action indexes
             let action_indexes_tensor = self.get_action_indexes(&hand_states)?;
 
-            // Build masks to apply before softmax for invalid actions
-            let mut valid_action_masks = Vec::new();
-            for hand_state in hand_states.iter() {
-                for action_state in hand_state.get_traverser_action_states().iter() {
-                    let mask = action_state
-                        .valid_actions_mask
-                        .iter()
-                        .map(|x| if *x { 0.0 } else { -f32::MAX })
-                        .collect::<Vec<f32>>();
-                    valid_action_masks.push(mask);
-                }
-            }
-
-            let valid_action_mask_tensor = Tensor::new(valid_action_masks, &self.device)?;
-
             // Run all states through network
             let embedding =
                 trained_network.forward_embedding(&card_input_tensor, &action_input_tensor)?;
-            let base_actor_outputs =
-                trained_network.forward_actor(&embedding, &valid_action_mask_tensor)?;
-            let base_critic_outputs = trained_network.forward_critic(&embedding)?;
+            let base_actor_outputs = trained_network.forward_actor(&embedding)?;
+            let base_critic_outputs = trained_network
+                .forward_critic(&embedding)?
+                .unwrap()
+                .detach()?; // Detach to prevent gradient updates from it
 
             let old_probs_log_tensor = base_actor_outputs
                 .gather(&action_indexes_tensor, 1)?
                 .squeeze(1)?
-                .log()?;
+                .log()?
+                .detach()?; // Detach to prevent gradient updates from it
 
             // Calculate advantage GAE for each hand state
             let mut advantage_gae: Vec<f32> = Vec::new();
             {
-                let base_critic_outputs_vec: Vec<f32> = base_critic_outputs
-                    .as_ref()
-                    .unwrap()
-                    .squeeze(1)?
-                    .to_vec1()?;
+                let base_critic_outputs_vec: Vec<f32> =
+                    base_critic_outputs.as_ref().squeeze(1)?.to_vec1()?;
 
                 for i in 0..hand_states.len() {
                     let (mut advantage, _) = self.calculate_advantage_gae(
@@ -274,8 +269,6 @@ impl<'a> Trainer<'a> {
                     );
                     advantage_gae.append(&mut advantage);
                 }
-
-                assert!(advantage_gae.len() == step_cnt);
 
                 // Normalize advantage_gae
                 Self::normalize_mean_std(&mut advantage_gae);
@@ -289,14 +282,13 @@ impl<'a> Trainer<'a> {
                     trained_network.forward_embedding(&card_input_tensor, &action_input_tensor)?;
 
                 // Run actor
-                let actor_outputs =
-                    trained_network.forward_actor(&embedding, &valid_action_mask_tensor)?;
+                let actor_outputs = trained_network.forward_actor(&embedding)?;
                 let probs_log_tensor = actor_outputs
                     .gather(&action_indexes_tensor, 1)?
                     .squeeze(1)?
                     .log()?;
 
-                // Get trinal clip PPO
+                // Get trinal clip policy loss
                 let policy_loss = self.get_trinal_clip_policy_loss(
                     &advantage_tensor,
                     &probs_log_tensor,
@@ -308,11 +300,12 @@ impl<'a> Trainer<'a> {
                     policy_loss.as_ref().unwrap().to_scalar::<f32>()
                 );
 
-                let mut gradients_policy = policy_loss?.backward()?;
+                let gradients_policy = policy_loss?.backward()?;
 
                 // Get critic output
                 let critic_outputs = trained_network.forward_critic(&embedding)?;
 
+                // Get trinal clip value loss
                 let value_loss = self.get_trinal_clip_value_loss(
                     critic_outputs.as_ref().unwrap(),
                     &gamma_rewards_tensor,
@@ -327,30 +320,82 @@ impl<'a> Trainer<'a> {
 
                 let gradients_value = value_loss?.backward()?;
 
-                // Do backprop on actor & critic networks
                 optimizer_policy.step(&gradients_policy)?;
                 optimizer_critic.step(&gradients_value)?;
 
-                trained_network
-                    .var_map
-                    .data()
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .for_each(|(k, v)| {
-                        if k.starts_with("siamese") {
-                            let grad_policy = gradients_policy.get(v).unwrap();
-                            let grad_value = gradients_value.get(v).unwrap();
-                            let grad_weighted =
-                                (grad_policy * 0.5).unwrap() + (grad_value * 0.5).unwrap();
-                            gradients_policy.insert(v, grad_weighted.unwrap());
-                        }
-                    });
+                // Calculate siamese gradients, weighted sum of actor and critic gradients
+                // I did not find a better way to create a new GradStore, is there one ?
+                // let mut gradients_embedding =
+                //     Tensor::zeros((), candle_core::DType::F32, &self.device)?.backward()?;
+                // trained_network
+                //     .var_map
+                //     .data()
+                //     .lock()
+                //     .unwrap()
+                //     .iter()
+                //     .for_each(|(k, v)| {
+                //         if k.starts_with("siamese") {
+                //             let grad_policy = gradients_policy.get_id(v.id()).unwrap();
 
-                optimizer_embedding.step(&gradients_policy)?;
+                //             let grad_value = gradients_value.get_id(v.id()).unwrap();
+                //             let grad_weighted = ((grad_policy * 0.5).unwrap()
+                //                 + (grad_value * 0.5).unwrap())
+                //             .unwrap();
+
+                //             // Check for NaN
+                //             let flat_policy = grad_policy
+                //                 .copy()
+                //                 .unwrap()
+                //                 .flatten(0, grad_policy.dims().len() - 1)
+                //                 .unwrap();
+
+                //             let flat_value = grad_value
+                //                 .copy()
+                //                 .unwrap()
+                //                 .flatten(0, grad_value.dims().len() - 1)
+                //                 .unwrap();
+
+                //             if flat_policy
+                //                 .as_ref()
+                //                 .to_vec1::<f32>()
+                //                 .unwrap()
+                //                 .iter()
+                //                 .any(|x: &f32| x.is_nan())
+                //             {
+                //                 println!("NAN in policy gradients");
+                //             }
+                //             if flat_value
+                //                 .as_ref()
+                //                 .to_vec1::<f32>()
+                //                 .unwrap()
+                //                 .iter()
+                //                 .any(|x: &f32| x.is_nan())
+                //             {
+                //                 println!("NAN in value gradients");
+                //             }
+
+                //             let flat = grad_weighted
+                //                 .copy()
+                //                 .unwrap()
+                //                 .flatten(0, grad_weighted.dims().len() - 1)
+                //                 .unwrap();
+
+                //             assert!(!flat
+                //                 .as_ref()
+                //                 .to_vec1::<f32>()
+                //                 .unwrap()
+                //                 .iter()
+                //                 .any(|x: &f32| x.is_nan()));
+
+                //             gradients_embedding.insert(v, grad_weighted);
+                //         }
+                //     });
+
+                // Do backprop
+                optimizer_embedding.step(&gradients_value)?;
             }
             self.tree.print_first_actions(
-                &trained_network,
+                &trained_network.clone()?,
                 &self.device,
                 self.trainer_config.no_invalid_for_traverser,
             )?;
@@ -378,30 +423,6 @@ impl<'a> Trainer<'a> {
             if iteration % 100 == 0 {
                 agent_pool.add_agent(Box::new(AgentNetwork::new(trained_network.clone()?)));
             }
-
-            // // Reset trained network every 100 iterations
-            // if iteration % 100 == 0 {
-            //     // Save varmaps
-            //     trained_network.var_map_actor.save(
-            //         Path::new(&self.output_path)
-            //             .join(&format!("poker_network_actor_reset_{}.pt", iteration)),
-            //     )?;
-            //     trained_network.var_map_critic_siamese.save(
-            //         Path::new(&self.output_path)
-            //             .join(&format!("poker_network_cs_reset_{}.pt", iteration)),
-            //     )?;
-
-            //     // Reset network
-            //     trained_network = PokerNetwork::new(
-            //         self.player_cnt,
-            //         self.action_config,
-            //         self.device.clone(),
-            //         true,
-            //     )?;
-
-            //     optimizer_policy =
-            //         candle_nn::AdamW::new_lr(trained_network.var_map_actor.all_vars(), 3e-4)?;
-            // }
         }
 
         Ok(())
@@ -507,6 +528,9 @@ impl<'a> Trainer<'a> {
         let mean = vec.iter().sum::<f32>() / vec.len() as f32;
         let variance = vec.iter().map(|x| (x - mean).powf(2.0)).sum::<f32>() / vec.len() as f32;
         let std_dev = variance.sqrt();
+        if std_dev == 0.0 {
+            return;
+        }
         for x in vec.iter_mut() {
             *x = (*x - mean) / (std_dev + 1e-10);
         }

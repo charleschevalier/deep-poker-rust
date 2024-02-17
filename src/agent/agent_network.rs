@@ -4,12 +4,9 @@ use crate::model::poker_network::PokerNetwork;
 use candle_core::Tensor;
 
 use rand::distributions::Distribution;
-use rand::Rng;
 
 pub struct AgentNetwork<'a> {
     network: PokerNetwork<'a>,
-    game_count: u32,
-    won_count: u32,
 }
 
 impl<'a> Agent<'a> for AgentNetwork<'a> {
@@ -28,11 +25,9 @@ impl<'a> Agent<'a> for AgentNetwork<'a> {
             hand_state.action_states.len(),
         )?;
 
-        let proba_tensor = self.network.forward_embedding_actor(
-            &card_tensor.unsqueeze(0)?,
-            &action_tensor.unsqueeze(0)?,
-            &AgentNetwork::valid_actions_mask_to_tensor(&valid_actions_mask, device)?,
-        )?;
+        let proba_tensor = self
+            .network
+            .forward_embedding_actor(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?;
 
         Self::choose_action_from_net(&proba_tensor, valid_actions_mask, true)
     }
@@ -40,11 +35,7 @@ impl<'a> Agent<'a> for AgentNetwork<'a> {
 
 impl<'a> AgentNetwork<'a> {
     pub fn new(network: PokerNetwork) -> AgentNetwork {
-        AgentNetwork {
-            network,
-            game_count: 0,
-            won_count: 0,
-        }
+        AgentNetwork { network }
     }
 
     pub fn choose_action_from_net(
@@ -104,16 +95,5 @@ impl<'a> AgentNetwork<'a> {
         }
 
         Ok(action_index)
-    }
-
-    pub fn valid_actions_mask_to_tensor(
-        valid_actions_mask: &[bool],
-        device: &candle_core::Device,
-    ) -> Result<Tensor, Box<dyn std::error::Error>> {
-        let vals = valid_actions_mask
-            .iter()
-            .map(|x| if *x { 0.0 } else { -f32::MAX })
-            .collect::<Vec<f32>>();
-        Ok(Tensor::new(vals, device)?)
     }
 }

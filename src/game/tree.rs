@@ -132,10 +132,6 @@ impl<'a> Tree<'a> {
                 let proba_tensor = network.forward_embedding_actor(
                     &card_tensor.unsqueeze(0)?,
                     &action_tensor.unsqueeze(0)?,
-                    &AgentNetwork::valid_actions_mask_to_tensor(
-                        &valid_actions_mask,
-                        card_tensor.device(),
-                    )?,
                 )?;
 
                 let valid_actions_mask = state.get_valid_actions_mask();
@@ -289,14 +285,7 @@ impl<'a> Tree<'a> {
                 let card_tensor = Tensor::new(card_vecs, device)?.unsqueeze(0)?;
                 let action_tensor = Tensor::new(action_vecs, device)?.unsqueeze(0)?;
 
-                let proba_tensor = network.forward_embedding_actor(
-                    &card_tensor,
-                    &action_tensor,
-                    &AgentNetwork::valid_actions_mask_to_tensor(
-                        &valid_actions_mask,
-                        card_tensor.device(),
-                    )?,
-                )?;
+                let proba_tensor = network.forward_embedding_actor(&card_tensor, &action_tensor)?;
 
                 let is_suited = suit1 == suit2;
 
@@ -506,10 +495,6 @@ impl<'a> Tree<'a> {
                 let proba_tensor = network.forward_embedding_actor(
                     &card_tensor.unsqueeze(0)?,
                     &action_tensor.unsqueeze(0)?,
-                    &AgentNetwork::valid_actions_mask_to_tensor(
-                        &gs.get_valid_actions_mask(),
-                        card_tensor.device(),
-                    )?,
                 )?;
 
                 gs.create_children();

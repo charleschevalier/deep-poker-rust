@@ -76,10 +76,9 @@ impl<'a> PokerNetwork<'a> {
         &self,
         card_tensor: &Tensor,
         action_tensor: &Tensor,
-        mask: &Tensor,
     ) -> Result<Tensor, Box<dyn std::error::Error>> {
         let x = self.siamese_network.forward(card_tensor, action_tensor)?;
-        self.actor_network.forward(&x, mask)
+        self.actor_network.forward(&x)
     }
 
     pub fn forward_embedding(
@@ -90,12 +89,8 @@ impl<'a> PokerNetwork<'a> {
         Ok(self.siamese_network.forward(card_tensor, action_tensor)?)
     }
 
-    pub fn forward_actor(
-        &self,
-        x: &Tensor,
-        mask: &Tensor,
-    ) -> Result<Tensor, Box<dyn std::error::Error>> {
-        self.actor_network.forward(x, mask)
+    pub fn forward_actor(&self, x: &Tensor) -> Result<Tensor, Box<dyn std::error::Error>> {
+        self.actor_network.forward(x)
     }
 
     pub fn forward_critic(&self, x: &Tensor) -> Result<Option<Tensor>, Box<dyn std::error::Error>> {
