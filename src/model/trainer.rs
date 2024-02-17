@@ -83,8 +83,8 @@ impl<'a> Trainer<'a> {
             if latest_iteration >= 100 {
                 let delta = latest_iteration % 100;
                 let end = latest_iteration - delta;
-                let start = std::cmp::max(100, end - 400);
-                for i in (start..end + 100).step_by(100) {
+                let start = std::cmp::max(100, end as i32 - 400);
+                for i in (start as u32..end + 100).step_by(100) {
                     let mut network = PokerNetwork::new(
                         self.player_cnt,
                         self.action_config,
@@ -100,29 +100,27 @@ impl<'a> Trainer<'a> {
         }
 
         let filter_var_map_by_prefix = |varmap: &candle_nn::VarMap, prefix: &[&str]| {
-            let test = varmap
+            varmap
                 .data()
                 .lock()
                 .unwrap()
                 .iter()
                 .filter(|(name, _)| prefix.iter().any(|&item| name.starts_with(item)))
                 .map(|(_, var)| var.clone())
-                .collect::<Vec<candle_core::Var>>();
-            println!("Test: {:?}", test.len());
-            test
+                .collect::<Vec<candle_core::Var>>()
         };
 
         let mut optimizer_embedding = candle_nn::AdamW::new_lr(
             filter_var_map_by_prefix(&trained_network.var_map, &["siamese"]),
-            3e-4,
+            1e-5,
         )?;
         let mut optimizer_policy = candle_nn::AdamW::new_lr(
             filter_var_map_by_prefix(&trained_network.var_map, &["actor"]),
-            3e-4,
+            1e-5,
         )?;
         let mut optimizer_critic = candle_nn::AdamW::new_lr(
             filter_var_map_by_prefix(&trained_network.var_map, &["critic"]),
-            3e-4,
+            1e-5,
         )?;
 
         for iteration in (latest_iteration as usize + 1)..self.trainer_config.max_iters {
@@ -155,13 +153,36 @@ impl<'a> Trainer<'a> {
                             self.trainer_config.no_invalid_for_traverser,
                         )?;
 
-                        // Make sure the hand state has at least one state for the traverser
+                        // Make sure the hand state has at least one state for the traverser, and that we
+                        // do not have too much actions per street
                         let hs = self.tree.hand_state.clone();
                         if let Some(hs) = hs {
-                            // count number of action states for traverser
+                            // Count number of action states for traverser
                             if hs.get_traverser_action_states().is_empty() {
                                 continue;
                             }
+                            // Count number of action per street
+                            let mut action_cnt = 0;
+                            let mut too_much = false;
+                            let mut street = 0;
+                            for action_state in hs.get_traverser_action_states() {
+                                if action_state.street == street {
+                                    action_cnt += 1;
+                                } else {
+                                    street = action_state.street;
+                                    action_cnt = 0;
+                                }
+
+                                if action_cnt > (self.action_config.player_count - 1) * 3 {
+                                    too_much = true;
+                                    break;
+                                }
+                            }
+
+                            if too_much {
+                                continue;
+                            }
+
                             hand_states.push(hs);
                         }
 
@@ -238,20 +259,22 @@ impl<'a> Trainer<'a> {
             // Get action indexes
             let action_indexes_tensor = self.get_action_indexes(&hand_states)?;
 
-            // Run all states through network
-            let embedding =
-                trained_network.forward_embedding(&card_input_tensor, &action_input_tensor)?;
-            let base_actor_outputs = trained_network.forward_actor(&embedding)?;
+            // Run all states through network. Detach to prevent gradient updates
+            let old_embedding = trained_network
+                .forward_embedding(&card_input_tensor, &action_input_tensor, false)?
+                .detach()?;
+
+            let base_actor_outputs = trained_network.forward_actor(&old_embedding)?.detach()?;
+
             let base_critic_outputs = trained_network
-                .forward_critic(&embedding)?
+                .forward_critic(&old_embedding)?
                 .unwrap()
-                .detach()?; // Detach to prevent gradient updates from it
+                .detach()?;
 
             let old_probs_log_tensor = base_actor_outputs
                 .gather(&action_indexes_tensor, 1)?
                 .squeeze(1)?
-                .log()?
-                .detach()?; // Detach to prevent gradient updates from it
+                .log()?;
 
             // Calculate advantage GAE for each hand state
             let mut advantage_gae: Vec<f32> = Vec::new();
@@ -278,8 +301,11 @@ impl<'a> Trainer<'a> {
 
             for _update_step in 0..self.trainer_config.update_step {
                 // Get embedding
-                let embedding =
-                    trained_network.forward_embedding(&card_input_tensor, &action_input_tensor)?;
+                let embedding = trained_network.forward_embedding(
+                    &card_input_tensor,
+                    &action_input_tensor,
+                    true,
+                )?;
 
                 // Run actor
                 let actor_outputs = trained_network.forward_actor(&embedding)?;
@@ -302,6 +328,8 @@ impl<'a> Trainer<'a> {
 
                 let gradients_policy = policy_loss?.backward()?;
 
+                optimizer_policy.step(&gradients_policy)?;
+
                 // Get critic output
                 let critic_outputs = trained_network.forward_critic(&embedding)?;
 
@@ -320,80 +348,157 @@ impl<'a> Trainer<'a> {
 
                 let gradients_value = value_loss?.backward()?;
 
-                optimizer_policy.step(&gradients_policy)?;
                 optimizer_critic.step(&gradients_value)?;
 
                 // Calculate siamese gradients, weighted sum of actor and critic gradients
                 // I did not find a better way to create a new GradStore, is there one ?
-                // let mut gradients_embedding =
-                //     Tensor::zeros((), candle_core::DType::F32, &self.device)?.backward()?;
-                // trained_network
-                //     .var_map
-                //     .data()
-                //     .lock()
-                //     .unwrap()
-                //     .iter()
-                //     .for_each(|(k, v)| {
-                //         if k.starts_with("siamese") {
-                //             let grad_policy = gradients_policy.get_id(v.id()).unwrap();
+                let mut gradients_embedding =
+                    Tensor::zeros((), candle_core::DType::F32, &self.device)?.backward()?;
+                trained_network
+                    .var_map
+                    .data()
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .for_each(|(k, v)| {
+                        if k.starts_with("siamese")
+                            && !k.ends_with("running_var")
+                            && !k.ends_with("running_mean")
+                            && !k.ends_with("batch_norm.bias")
+                            && !k.ends_with("batch_norm.weight")
+                        {
+                            // println!("Key: {}", k);
+                            let grad_policy = gradients_policy.get_id(v.id()).unwrap();
+                            let grad_value = gradients_value.get_id(v.id()).unwrap();
+                            let grad_weighted = ((grad_policy * 0.5).unwrap()
+                                + (grad_value * 0.5).unwrap())
+                            .unwrap();
 
-                //             let grad_value = gradients_value.get_id(v.id()).unwrap();
-                //             let grad_weighted = ((grad_policy * 0.5).unwrap()
-                //                 + (grad_value * 0.5).unwrap())
-                //             .unwrap();
+                            // Check for NaN
+                            let flat_var = v
+                                .copy()
+                                .unwrap()
+                                .flatten(0, grad_policy.dims().len() - 1)
+                                .unwrap();
 
-                //             // Check for NaN
-                //             let flat_policy = grad_policy
-                //                 .copy()
-                //                 .unwrap()
-                //                 .flatten(0, grad_policy.dims().len() - 1)
-                //                 .unwrap();
+                            let flat_policy = grad_policy
+                                .copy()
+                                .unwrap()
+                                .flatten(0, grad_policy.dims().len() - 1)
+                                .unwrap();
 
-                //             let flat_value = grad_value
-                //                 .copy()
-                //                 .unwrap()
-                //                 .flatten(0, grad_value.dims().len() - 1)
-                //                 .unwrap();
+                            // if k == "siamese_card_conv_1.bias"
+                            //     || k == "siamese_card_conv_2.bias"
+                            //     || k == "siamese_action_conv_1.bias"
+                            //     || k == "siamese_action_conv_2.bias"
+                            //     || k == "siamese_card_conv_2.weight"
+                            // {
+                            //     println!();
+                            //     println!();
+                            //     println!();
+                            //     println!(
+                            //         "POLICY {}: {:?}",
+                            //         k,
+                            //         flat_policy.as_ref().to_vec1::<f32>().unwrap()
+                            //     );
+                            //     println!(
+                            //         "VAR {}: {:?}",
+                            //         k,
+                            //         flat_var.as_ref().to_vec1::<f32>().unwrap()
+                            //     );
+                            // }
 
-                //             if flat_policy
-                //                 .as_ref()
-                //                 .to_vec1::<f32>()
-                //                 .unwrap()
-                //                 .iter()
-                //                 .any(|x: &f32| x.is_nan())
-                //             {
-                //                 println!("NAN in policy gradients");
-                //             }
-                //             if flat_value
-                //                 .as_ref()
-                //                 .to_vec1::<f32>()
-                //                 .unwrap()
-                //                 .iter()
-                //                 .any(|x: &f32| x.is_nan())
-                //             {
-                //                 println!("NAN in value gradients");
-                //             }
+                            let flat_value = grad_value
+                                .copy()
+                                .unwrap()
+                                .flatten(0, grad_value.dims().len() - 1)
+                                .unwrap();
 
-                //             let flat = grad_weighted
-                //                 .copy()
-                //                 .unwrap()
-                //                 .flatten(0, grad_weighted.dims().len() - 1)
-                //                 .unwrap();
+                            if flat_policy
+                                .as_ref()
+                                .to_vec1::<f32>()
+                                .unwrap()
+                                .iter()
+                                .any(|x: &f32| *x > 100.0)
+                            {
+                                println!(
+                                    "flat_policy: {:?}",
+                                    flat_policy.as_ref().to_vec1::<f32>().unwrap()
+                                );
+                                panic!("HIGH in policy gradients at key: {}", k);
+                            }
 
-                //             assert!(!flat
-                //                 .as_ref()
-                //                 .to_vec1::<f32>()
-                //                 .unwrap()
-                //                 .iter()
-                //                 .any(|x: &f32| x.is_nan()));
+                            if flat_var
+                                .as_ref()
+                                .to_vec1::<f32>()
+                                .unwrap()
+                                .iter()
+                                .any(|x: &f32| *x > 100.0)
+                            {
+                                println!(
+                                    "flat_var: {:?}",
+                                    flat_var.as_ref().to_vec1::<f32>().unwrap()
+                                );
+                                panic!("HIGH in flat_var gradients at key: {}", k);
+                            }
 
-                //             gradients_embedding.insert(v, grad_weighted);
-                //         }
-                //     });
+                            if flat_policy
+                                .as_ref()
+                                .to_vec1::<f32>()
+                                .unwrap()
+                                .iter()
+                                .any(|x: &f32| x.is_nan())
+                            {
+                                println!(
+                                    "flat_policy: {:?}",
+                                    flat_policy.as_ref().to_vec1::<f32>().unwrap()
+                                );
 
-                // Do backprop
-                optimizer_embedding.step(&gradients_value)?;
+                                println!(
+                                    "flat_var: {:?}",
+                                    flat_var.as_ref().to_vec1::<f32>().unwrap()
+                                );
+                                println!("NAN in policy gradients at key: {}", k);
+                            }
+                            if flat_value
+                                .as_ref()
+                                .to_vec1::<f32>()
+                                .unwrap()
+                                .iter()
+                                .any(|x: &f32| x.is_nan())
+                            {
+                                println!("NAN in value gradients at key: {}", k);
+                            }
+
+                            assert!(!flat_policy
+                                .as_ref()
+                                .to_vec1::<f32>()
+                                .unwrap()
+                                .iter()
+                                .any(|x: &f32| x.is_nan()));
+
+                            // let flat = grad_weighted
+                            //     .copy()
+                            //     .unwrap()
+                            //     .flatten(0, grad_weighted.dims().len() - 1)
+                            //     .unwrap();
+
+                            // assert!(!flat
+                            //     .as_ref()
+                            //     .to_vec1::<f32>()
+                            //     .unwrap()
+                            //     .iter()
+                            //     .any(|x: &f32| x.is_nan()));
+
+                            gradients_embedding.insert(v, grad_weighted);
+                        }
+                    });
+
+                // // Do backprop
+                optimizer_embedding.step(&gradients_embedding)?;
+                // optimizer_embedding.step(&gradients_value)?;
             }
+
             self.tree.print_first_actions(
                 &trained_network.clone()?,
                 &self.device,
@@ -408,7 +513,7 @@ impl<'a> Trainer<'a> {
             //     )?;
             // }
 
-            if iteration > 0 && iteration % 50 == 0 {
+            if iteration > 0 && iteration % 10 == 0 {
                 trained_network.var_map.save(
                     Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration)),
                 )?;

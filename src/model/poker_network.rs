@@ -1,12 +1,14 @@
 use super::actor_network::ActorNetwork;
 use super::critic_network::CriticNetwork;
 use super::siamese_network_conv::SiameseNetworkConv;
+// use super::siamese_network_linear::SiameseNetworkLinear;
 use crate::game::action::ActionConfig;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::{VarBuilder, VarMap};
 
 pub struct PokerNetwork<'a> {
     siamese_network: SiameseNetworkConv,
+    // siamese_network: SiameseNetworkLinear,
     actor_network: ActorNetwork,
     critic_network: CriticNetwork,
     pub var_map: VarMap,
@@ -28,6 +30,7 @@ impl<'a> PokerNetwork<'a> {
         let vb = VarBuilder::from_varmap(&var_map, DType::F32, &device);
 
         let siamese_network = SiameseNetworkConv::new(
+            // let siamese_network = SiameseNetworkLinear::new(
             player_count,
             3 + action_config.postflop_raise_sizes.len() as u32, // Each raise size + fold, call, check
             player_count as usize * 3, // 3 actions max per player per street => TODO: prevent situations where we have more than 3 actions
@@ -76,8 +79,11 @@ impl<'a> PokerNetwork<'a> {
         &self,
         card_tensor: &Tensor,
         action_tensor: &Tensor,
+        train: bool,
     ) -> Result<Tensor, Box<dyn std::error::Error>> {
-        let x = self.siamese_network.forward(card_tensor, action_tensor)?;
+        let x = self
+            .siamese_network
+            .forward(card_tensor, action_tensor, train)?;
         self.actor_network.forward(&x)
     }
 
@@ -85,8 +91,11 @@ impl<'a> PokerNetwork<'a> {
         &self,
         card_tensor: &Tensor,
         action_tensor: &Tensor,
+        train: bool,
     ) -> Result<Tensor, Box<dyn std::error::Error>> {
-        Ok(self.siamese_network.forward(card_tensor, action_tensor)?)
+        Ok(self
+            .siamese_network
+            .forward(card_tensor, action_tensor, train)?)
     }
 
     pub fn forward_actor(&self, x: &Tensor) -> Result<Tensor, Box<dyn std::error::Error>> {
