@@ -7,6 +7,7 @@ use crate::agent::agent_pool::AgentPool;
 use crate::game::action::ActionConfig;
 use crate::game::hand_state::HandState;
 use crate::game::tree::Tree;
+use crate::helper;
 use candle_core::{Device, Tensor};
 use candle_nn::Optimizer;
 
@@ -41,8 +42,9 @@ impl<'a> Trainer<'a> {
 
     pub fn train(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let gae_gamma = 0.99;
-        let gae_lamda = 0.95;
+        let gae_lambda = 0.95;
         let reward_gamma = 0.999;
+        let log_epsilon = 1e-10;
 
         let mut trained_network = PokerNetwork::new(
             self.player_cnt,
@@ -57,28 +59,17 @@ impl<'a> Trainer<'a> {
         let latest_iteration = self.load_existing(&mut trained_network, &mut agent_pool)?;
 
         // Build optimizers
-        let filter_var_map_by_prefix = |varmap: &candle_nn::VarMap, prefix: &[&str]| {
-            varmap
-                .data()
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|(name, _)| prefix.iter().any(|&item| name.starts_with(item)))
-                .map(|(_, var)| var.clone())
-                .collect::<Vec<candle_core::Var>>()
-        };
-
         let mut optimizer_embedding = candle_nn::AdamW::new_lr(
-            filter_var_map_by_prefix(&trained_network.var_map, &["siamese"]),
-            3e-4,
+            helper::filter_var_map_by_prefix(&trained_network.var_map, &["siamese"]),
+            self.trainer_config.learning_rate,
         )?;
         let mut optimizer_policy = candle_nn::AdamW::new_lr(
-            filter_var_map_by_prefix(&trained_network.var_map, &["actor"]),
-            3e-4,
+            helper::filter_var_map_by_prefix(&trained_network.var_map, &["actor"]),
+            self.trainer_config.learning_rate,
         )?;
         let mut optimizer_critic = candle_nn::AdamW::new_lr(
-            filter_var_map_by_prefix(&trained_network.var_map, &["critic"]),
-            3e-4,
+            helper::filter_var_map_by_prefix(&trained_network.var_map, &["critic"]),
+            self.trainer_config.learning_rate,
         )?;
 
         // Main training loop
@@ -165,10 +156,11 @@ impl<'a> Trainer<'a> {
                 .unwrap()
                 .detach()?;
 
-            let old_probs_log_tensor = base_actor_outputs
+            let old_probs_tensor = (base_actor_outputs
                 .gather(&action_indexes_tensor, 1)?
                 .squeeze(1)?
-                .log()?;
+                + log_epsilon)?; // Add an epsilon to avoid log(0)
+            let old_probs_log_tensor = old_probs_tensor.log()?;
 
             // Calculate advantage GAE for each hand state
             let mut advantage_gae: Vec<f32> = Vec::new();
@@ -182,7 +174,7 @@ impl<'a> Trainer<'a> {
                         &base_critic_outputs_vec
                             [indexes[i]..indexes[i] + rewards_by_hand_state[i].len()],
                         gae_gamma,
-                        gae_lamda,
+                        gae_lambda,
                     );
                     advantage_gae.append(&mut advantage);
                 }
@@ -203,10 +195,10 @@ impl<'a> Trainer<'a> {
                 let probs_tensor = (actor_outputs
                     .gather(&action_indexes_tensor, 1)?
                     .squeeze(1)?
-                    + 1e-10)?;
+                    + log_epsilon)?; // Add an epsilon to avoid log(0)
                 let probs_log_tensor = probs_tensor.log()?;
 
-                // Get trinal clip policy loss (we use a copy of the output tensor or we have issues with backprop)
+                // Get trinal clip policy loss
                 let policy_loss = self.get_trinal_clip_policy_loss(
                     &advantage_tensor,
                     &probs_log_tensor,
@@ -251,6 +243,22 @@ impl<'a> Trainer<'a> {
                     .for_each(|(k, v)| {
                         let grad_policy = gradients_policy.get_id(v.id());
                         let grad_value = gradients_value.get_id(v.id());
+
+                        if grad_policy.is_some() {
+                            if let Err(e) = helper::check_tensor(grad_policy.unwrap()) {
+                                println!("PROBS: {:?}", helper::fast_flatten(&probs_tensor));
+                                println!(
+                                    "PROBS LOG: {:?}",
+                                    helper::fast_flatten(&probs_log_tensor)
+                                );
+                                println!(
+                                    "OLD PROBS LOG: {:?}",
+                                    helper::fast_flatten(&old_probs_log_tensor)
+                                );
+                                println!("Policy gradient error at key {}: {}", k, e);
+                                panic!("Policy gradient error");
+                            }
+                        }
 
                         if k.starts_with("siamese") && grad_policy.is_some() && grad_value.is_some()
                         {
@@ -402,7 +410,7 @@ impl<'a> Trainer<'a> {
         rewards: &[f32],
         values: &[f32],
         gamma: f32,
-        lamda: f32,
+        lambda: f32,
     ) -> (Vec<f32>, Vec<f32>) {
         let size = rewards.len();
         let mut advantage = vec![0.0; size + 1];
@@ -410,7 +418,7 @@ impl<'a> Trainer<'a> {
         for t in (0..size).rev() {
             let delta =
                 rewards[t] + gamma * (if t == size - 1 { 0.0 } else { values[t + 1] }) - values[t];
-            advantage[t] = delta + gamma * lamda * advantage[t + 1];
+            advantage[t] = delta + gamma * lambda * advantage[t + 1];
         }
 
         let mut value_target = values.to_vec();

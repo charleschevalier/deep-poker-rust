@@ -1,4 +1,5 @@
 pub struct TrainerConfig {
+    pub learning_rate: f64,
     pub max_iters: usize,
     pub hands_per_player_per_iteration: usize,
     pub update_step: usize,

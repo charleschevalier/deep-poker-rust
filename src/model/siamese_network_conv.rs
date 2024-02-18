@@ -174,18 +174,4 @@ impl SiameseNetworkConv {
             (input_size.1 - kernel_size + 2 * padding) / stride + 1,
         )
     }
-
-    pub fn _print_weights(&self) {
-        for _ in 0..self.card_conv_layer_1.weight().dim(0).unwrap() {
-            let v3 = self
-                .card_conv_layer_1
-                .weight()
-                .get(0)
-                .unwrap()
-                .to_vec3::<f32>()
-                .unwrap();
-            println!("Card conv 1 weights: {:?}", v3);
-        }
-        //println!("Card conv 1 weights: {:?}", self.card_conv_layer_1.weight().to_ve);
-    }
 }

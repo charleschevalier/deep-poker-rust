@@ -17,6 +17,7 @@ fn main() {
     action_config.postflop_raise_sizes = vec![0.25, 0.5, 0.66, 1.0];
 
     let trainer_config = TrainerConfig {
+        learning_rate: 1e-5,
         max_iters: 500000,
         hands_per_player_per_iteration: 1024,
         update_step: 32,
@@ -24,7 +25,7 @@ fn main() {
         ppo_delta_1: 3.0,
         no_invalid_for_traverser: true,
         new_agent_interval: 100,
-        save_interval: 10,
+        save_interval: 100,
     };
 
     let device = Device::cuda_if_available(0).unwrap();
