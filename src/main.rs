@@ -7,6 +7,7 @@ use std::backtrace::Backtrace;
 
 mod agent;
 mod game;
+mod helper;
 mod model;
 
 fn main() {
@@ -23,7 +24,7 @@ fn main() {
         ppo_delta_1: 3.0,
         no_invalid_for_traverser: true,
         new_agent_interval: 100,
-        save_interval: 100,
+        save_interval: 10,
     };
 
     let device = Device::cuda_if_available(0).unwrap();

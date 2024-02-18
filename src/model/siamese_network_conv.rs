@@ -123,8 +123,8 @@ impl SiameseNetworkConv {
 
         // println!("Action conv shape: {:?}", action_conv.weight().shape());
 
-        println!("final_card_conv_size: {}", final_card_conv_size);
-        println!("final_action_conv_size: {}", final_action_conv_size);
+        // println!("final_card_conv_size: {}", final_card_conv_size);
+        // println!("final_action_conv_size: {}", final_action_conv_size);
 
         let merge_layer = linear(
             final_card_conv_size as usize + final_action_conv_size as usize,

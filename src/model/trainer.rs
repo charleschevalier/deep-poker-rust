@@ -7,8 +7,9 @@ use crate::agent::agent_pool::AgentPool;
 use crate::game::action::ActionConfig;
 use crate::game::hand_state::HandState;
 use crate::game::tree::Tree;
+use crate::helper;
 use candle_core::{Device, Tensor};
-use candle_nn::Optimizer;
+use candle_nn::{AdamW, Optimizer};
 
 use std::path::Path;
 
@@ -70,15 +71,15 @@ impl<'a> Trainer<'a> {
 
         let mut optimizer_embedding = candle_nn::AdamW::new_lr(
             filter_var_map_by_prefix(&trained_network.var_map, &["siamese"]),
-            1e-5,
+            3e-4,
         )?;
         let mut optimizer_policy = candle_nn::AdamW::new_lr(
             filter_var_map_by_prefix(&trained_network.var_map, &["actor"]),
-            1e-5,
+            3e-4,
         )?;
         let mut optimizer_critic = candle_nn::AdamW::new_lr(
             filter_var_map_by_prefix(&trained_network.var_map, &["critic"]),
-            1e-5,
+            3e-4,
         )?;
 
         // Main training loop
@@ -208,10 +209,10 @@ impl<'a> Trainer<'a> {
                     .squeeze(1)?
                     .log()?;
 
-                // Get trinal clip policy loss
+                // Get trinal clip policy loss (we use a copy of the output tensor or we have issues with backprop)
                 let policy_loss = self.get_trinal_clip_policy_loss(
                     &advantage_tensor,
-                    &probs_log_tensor,
+                    &probs_log_tensor.copy()?.detach()?,
                     &old_probs_log_tensor,
                 );
 
@@ -222,14 +223,12 @@ impl<'a> Trainer<'a> {
 
                 let gradients_policy = policy_loss?.backward()?;
 
-                optimizer_policy.step(&gradients_policy)?;
-
                 // Get critic output
                 let critic_outputs = trained_network.forward_critic(&embedding)?;
 
                 // Get trinal clip value loss
                 let value_loss = self.get_trinal_clip_value_loss(
-                    critic_outputs.as_ref().unwrap(),
+                    &critic_outputs.unwrap().copy()?,
                     &gamma_rewards_tensor,
                     &max_rewards_tensor,
                     &min_rewards_tensor,
@@ -242,8 +241,6 @@ impl<'a> Trainer<'a> {
 
                 let gradients_value = value_loss?.backward()?;
 
-                optimizer_critic.step(&gradients_value)?;
-
                 // Calculate siamese gradients, weighted sum of actor and critic gradients
                 // I did not find a better way to create a new GradStore, is there one ?
                 let mut gradients_embedding =
@@ -255,142 +252,110 @@ impl<'a> Trainer<'a> {
                     .unwrap()
                     .iter()
                     .for_each(|(k, v)| {
-                        if k.starts_with("siamese")
-                            && !k.ends_with("running_var")
-                            && !k.ends_with("running_mean")
-                            && !k.ends_with("batch_norm.bias")
-                            && !k.ends_with("batch_norm.weight")
+                        let grad_policy = gradients_policy.get_id(v.id());
+                        let grad_value = gradients_value.get_id(v.id());
+                        let mut has_error = false;
+
+                        // println!("KEY: {}", k);
+
+                        if let Err(err) = helper::check_tensor(v) {
+                            println!("value: {:?}", helper::fast_flatten(v));
+                            println!("value error at key {}: {}", k, err);
+                            has_error = true;
+                        }
+
+                        if grad_policy.is_some() {
+                            if let Err(err) = helper::check_tensor(grad_policy.unwrap()) {
+                                println!(
+                                    "grad_policy: {:?}",
+                                    helper::fast_flatten(grad_policy.unwrap())
+                                );
+                                println!("grad_policy error at key {}: {}", k, err);
+                                has_error = true;
+                            }
+                        }
+                        if grad_value.is_some() {
+                            if let Err(err) = helper::check_tensor(grad_value.unwrap()) {
+                                println!(
+                                    "grad_value: {:?}",
+                                    helper::fast_flatten(grad_value.unwrap())
+                                );
+                                println!("grad_value error at key {}: {}", k, err);
+                                has_error = true;
+                            }
+                        }
+
+                        if k.starts_with("siamese") && grad_policy.is_some() && grad_value.is_some()
                         {
-                            // println!("Key: {}", k);
-                            let grad_policy = gradients_policy.get_id(v.id()).unwrap();
-                            let grad_value = gradients_value.get_id(v.id()).unwrap();
-                            let grad_weighted = ((grad_policy * 0.5).unwrap()
-                                + (grad_value * 0.5).unwrap())
-                            .unwrap();
-
-                            // Check for NaN
-                            let flat_var = v
-                                .copy()
-                                .unwrap()
-                                .flatten(0, grad_policy.dims().len() - 1)
-                                .unwrap();
-
-                            let flat_policy = grad_policy
-                                .copy()
-                                .unwrap()
-                                .flatten(0, grad_policy.dims().len() - 1)
-                                .unwrap();
-
-                            // if k == "siamese_card_conv_1.bias"
-                            //     || k == "siamese_card_conv_2.bias"
-                            //     || k == "siamese_action_conv_1.bias"
-                            //     || k == "siamese_action_conv_2.bias"
-                            //     || k == "siamese_card_conv_2.weight"
-                            // {
-                            //     println!();
-                            //     println!();
-                            //     println!();
-                            //     println!(
-                            //         "POLICY {}: {:?}",
-                            //         k,
-                            //         flat_policy.as_ref().to_vec1::<f32>().unwrap()
-                            //     );
-                            //     println!(
-                            //         "VAR {}: {:?}",
-                            //         k,
-                            //         flat_var.as_ref().to_vec1::<f32>().unwrap()
-                            //     );
-                            // }
-
-                            let flat_value = grad_value
-                                .copy()
-                                .unwrap()
-                                .flatten(0, grad_value.dims().len() - 1)
-                                .unwrap();
-
-                            if flat_policy
-                                .as_ref()
-                                .to_vec1::<f32>()
-                                .unwrap()
-                                .iter()
-                                .any(|x: &f32| *x > 100.0)
-                            {
-                                println!(
-                                    "flat_policy: {:?}",
-                                    flat_policy.as_ref().to_vec1::<f32>().unwrap()
-                                );
-                                panic!("HIGH in policy gradients at key: {}", k);
-                            }
-
-                            if flat_var
-                                .as_ref()
-                                .to_vec1::<f32>()
-                                .unwrap()
-                                .iter()
-                                .any(|x: &f32| *x > 100.0)
-                            {
-                                println!(
-                                    "flat_var: {:?}",
-                                    flat_var.as_ref().to_vec1::<f32>().unwrap()
-                                );
-                                panic!("HIGH in flat_var gradients at key: {}", k);
-                            }
-
-                            if flat_policy
-                                .as_ref()
-                                .to_vec1::<f32>()
-                                .unwrap()
-                                .iter()
-                                .any(|x: &f32| x.is_nan())
-                            {
-                                println!(
-                                    "flat_policy: {:?}",
-                                    flat_policy.as_ref().to_vec1::<f32>().unwrap()
-                                );
-
-                                println!(
-                                    "flat_var: {:?}",
-                                    flat_var.as_ref().to_vec1::<f32>().unwrap()
-                                );
-                                println!("NAN in policy gradients at key: {}", k);
-                            }
-                            if flat_value
-                                .as_ref()
-                                .to_vec1::<f32>()
-                                .unwrap()
-                                .iter()
-                                .any(|x: &f32| x.is_nan())
-                            {
-                                println!("NAN in value gradients at key: {}", k);
-                            }
-
-                            assert!(!flat_policy
-                                .as_ref()
-                                .to_vec1::<f32>()
-                                .unwrap()
-                                .iter()
-                                .any(|x: &f32| x.is_nan()));
-
-                            // let flat = grad_weighted
+                            // let final_grad_policy = grad_policy
+                            //     .unwrap()
                             //     .copy()
                             //     .unwrap()
-                            //     .flatten(0, grad_weighted.dims().len() - 1)
+                            //     .clamp(-1.0, 1.0)
+                            //     .unwrap();
+                            // let final_grad_value = grad_value
+                            //     .unwrap()
+                            //     .copy()
+                            //     .unwrap()
+                            //     .clamp(-1.0, 1.0)
                             //     .unwrap();
 
-                            // assert!(!flat
-                            //     .as_ref()
-                            //     .to_vec1::<f32>()
-                            //     .unwrap()
-                            //     .iter()
-                            //     .any(|x: &f32| x.is_nan()));
+                            // println!("KEY: {}", k);
+                            // println!(
+                            //     "final_grad_policy: {:?}",
+                            //     helper::fast_flatten(&final_grad_policy)
+                            // );
+                            // println!(
+                            //     "final_grad_value: {:?}",
+                            //     helper::fast_flatten(&final_grad_value)
+                            // );
+                            // println!("value: {:?}", helper::fast_flatten(v));
+
+                            // let grad_weighted = ((final_grad_policy * 0.5).unwrap()
+                            //     + (final_grad_value * 0.5).unwrap())
+                            // .unwrap();
+
+                            let grad_weighted = ((grad_policy.unwrap() * 0.5).unwrap()
+                                + (grad_value.unwrap() * 0.5).unwrap())
+                            .unwrap();
+
+                            if let Err(err) = helper::check_tensor(&grad_weighted) {
+                                println!(
+                                    "grad_weighted: {:?}",
+                                    helper::fast_flatten(&grad_weighted)
+                                );
+                                println!("grad_weighted error at key {}: {}", k, err);
+                                has_error = true;
+                            }
 
                             gradients_embedding.insert(v, grad_weighted);
+                        }
+
+                        if has_error {
+                            panic!("Error in gradients");
                         }
                     });
 
                 // // Do backprop
+                optimizer_policy.step(&gradients_policy)?;
+                optimizer_critic.step(&gradients_value)?;
                 optimizer_embedding.step(&gradients_embedding)?;
                 // optimizer_embedding.step(&gradients_value)?;
+
+                // Check if varmap is ok
+                trained_network
+                    .var_map
+                    .data()
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .for_each(|(k, v)| {
+                        if let Err(err) = helper::check_tensor(v) {
+                            println!("AFTER value: {:?}", helper::fast_flatten(v));
+                            println!("AFTER value error: {}", err);
+                            panic!("Error in varmap at key {}", k);
+                        }
+                    });
             }
 
             self.tree.print_first_actions(
