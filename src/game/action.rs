@@ -27,6 +27,7 @@ impl Action {
     }
 }
 
+#[derive(Clone)]
 pub struct ActionConfig {
     pub player_count: u32,
     pub commited_to_pot_percentage: u8,

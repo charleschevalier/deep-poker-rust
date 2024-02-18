@@ -1,4 +1,5 @@
 use candle_core::Tensor;
+use std::sync::{Arc, Mutex};
 
 use super::action::ActionConfig;
 use super::action_state::ActionState;
@@ -6,7 +7,6 @@ use super::hand_state::HandState;
 use super::state::{State, StateType};
 use super::state_chance::StateChance;
 use super::state_data::StateData;
-use crate::agent::agent_network::AgentNetwork;
 use crate::agent::Agent;
 use crate::model::poker_network::PokerNetwork;
 use colored::*;
@@ -46,8 +46,7 @@ impl<'a> Tree<'a> {
     pub fn traverse(
         &mut self,
         traverser: u32,
-        network: &PokerNetwork,
-        agents: &Vec<Option<&dyn Agent>>,
+        agents: &Vec<Box<dyn Agent>>,
         device: &candle_core::Device,
         no_invalid_for_traverser: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -56,7 +55,6 @@ impl<'a> Tree<'a> {
         Tree::traverse_state(
             &mut self.root,
             self.hand_state.as_mut().unwrap(),
-            network,
             agents,
             self.action_config,
             device,
@@ -73,8 +71,7 @@ impl<'a> Tree<'a> {
     fn traverse_state(
         state_option: &mut Option<Box<dyn State<'a> + 'a>>,
         hand_state: &mut HandState,
-        network: &PokerNetwork,
-        agents: &Vec<Option<&dyn Agent>>,
+        agents: &Vec<Box<dyn Agent>>,
         action_config: &ActionConfig,
         device: &candle_core::Device,
         no_invalid_for_traverser: bool,
@@ -130,7 +127,6 @@ impl<'a> Tree<'a> {
             return Self::traverse_state(
                 state.get_child(0),
                 hand_state,
-                network,
                 agents,
                 action_config,
                 device,
@@ -145,39 +141,20 @@ impl<'a> Tree<'a> {
 
             let valid_actions_mask = state.get_valid_actions_mask();
 
-            let action_index = if traverser == state.get_player_to_move() as u32 {
-                let (card_tensor, action_tensor) = hand_state.to_input(
+            let action_index = agents[state.get_player_to_move() as usize]
+                .as_ref()
+                .choose_action(
+                    hand_state,
+                    &valid_actions_mask,
                     state.get_state_data().street,
                     action_config,
                     device,
-                    hand_state.action_states.len(),
+                    if state.get_player_to_move() == traverser as i32 {
+                        no_invalid_for_traverser
+                    } else {
+                        true
+                    },
                 )?;
-
-                let proba_tensor = network
-                    .forward_embedding_actor(
-                        &card_tensor.unsqueeze(0)?,
-                        &action_tensor.unsqueeze(0)?,
-                    )?
-                    .detach()?;
-
-                let valid_actions_mask = state.get_valid_actions_mask();
-                AgentNetwork::choose_action_from_net(
-                    &proba_tensor,
-                    &valid_actions_mask,
-                    no_invalid_for_traverser,
-                )?
-            } else {
-                agents[state.get_player_to_move() as usize]
-                    .as_ref()
-                    .unwrap()
-                    .choose_action(
-                        hand_state,
-                        &valid_actions_mask,
-                        state.get_state_data().street,
-                        action_config,
-                        device,
-                    )?
-            };
 
             if action_index > valid_actions_mask.len() || !valid_actions_mask[action_index] {
                 if state.get_player_to_move() == traverser as i32 {
@@ -209,7 +186,6 @@ impl<'a> Tree<'a> {
             Self::traverse_state(
                 state.get_child(action_index),
                 hand_state,
-                network,
                 agents,
                 action_config,
                 device,
@@ -262,16 +238,15 @@ impl<'a> Tree<'a> {
     }
 
     pub fn print_first_actions(
-        &self,
-        network: &PokerNetwork,
+        network: &Arc<Mutex<PokerNetwork>>,
         device: &candle_core::Device,
         no_invalid_for_traverser: bool,
+        action_config: &ActionConfig,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let action_count = self.action_config.postflop_raise_sizes.len() + 3;
+        let action_count = action_config.postflop_raise_sizes.len() + 3;
         let mut result: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 13]; action_count];
         let mut count: Vec<Vec<Vec<u32>>> = vec![vec![vec![0; 13]; 13]; action_count];
-        let mut valid_actions_mask: Vec<bool> = self
-            .action_config
+        let mut valid_actions_mask: Vec<bool> = action_config
             .preflop_raise_sizes
             .iter()
             .map(|&x| x > 0.0)
@@ -302,16 +277,18 @@ impl<'a> Tree<'a> {
                 let action_vecs: Vec<Vec<Vec<f32>>> =
                     vec![
                         vec![
-                            vec![0.0; 3 + self.action_config.postflop_raise_sizes.len()];
-                            self.action_config.player_count as usize + 2
+                            vec![0.0; 3 + action_config.postflop_raise_sizes.len()];
+                            action_config.player_count as usize + 2
                         ];
-                        4 * self.action_config.max_actions_per_street as usize
+                        4 * action_config.max_actions_per_street as usize
                     ];
 
                 let card_tensor = Tensor::new(card_vecs, device)?.unsqueeze(0)?;
                 let action_tensor = Tensor::new(action_vecs, device)?.unsqueeze(0)?;
 
                 let proba_tensor = network
+                    .lock()
+                    .unwrap()
                     .forward_embedding_actor(&card_tensor, &action_tensor)?
                     .detach()?;
 
@@ -463,12 +440,12 @@ impl<'a> Tree<'a> {
     //     Card::new(rank_f, suit_f)
     // }
 
-    pub fn _play_one_hand(
+    pub fn play_one_hand(
         &mut self,
-        network: &PokerNetwork,
+        agents: &[Box<dyn Agent>],
         device: &candle_core::Device,
-        no_invalid_for_traverser: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+        silent: bool,
+    ) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
         self.reset(0);
 
         let mut gs = self.root.as_mut().unwrap();
@@ -479,86 +456,87 @@ impl<'a> Tree<'a> {
                 gs.create_children();
                 gs = gs.get_child(0).as_mut().unwrap();
 
-                if first {
-                    println!();
-                    print!("Player Cards: ");
-                    for i in 0..self.player_cnt {
-                        let player_cards = gs.get_state_data().hands[i as usize].clone();
-                        print!(
-                            "{}{} ",
-                            player_cards[0].rank_suit_string(),
-                            player_cards[1].rank_suit_string()
-                        );
-                    }
-                    println!();
-                    first = false;
-                } else if gs.get_state_data().street >= 2 && !gs.get_state_data().board.is_empty() {
-                    print!("Table Cards: ");
-                    let board_cnt = match gs.get_state_data().street {
-                        2 => 3,
-                        3 => 4,
-                        4 => 5,
-                        _ => 0,
-                    };
+                if !silent {
+                    if first {
+                        println!();
+                        print!("Player Cards: ");
+                        for i in 0..self.player_cnt {
+                            let player_cards = gs.get_state_data().hands[i as usize].clone();
+                            print!(
+                                "{}{} ",
+                                player_cards[0].rank_suit_string(),
+                                player_cards[1].rank_suit_string()
+                            );
+                        }
+                        println!();
+                        first = false;
+                    } else if gs.get_state_data().street >= 2
+                        && !gs.get_state_data().board.is_empty()
+                    {
+                        print!("Table Cards: ");
+                        let board_cnt = match gs.get_state_data().street {
+                            2 => 3,
+                            3 => 4,
+                            4 => 5,
+                            _ => 0,
+                        };
 
-                    for i in 0..board_cnt {
-                        print!(
-                            "{} ",
-                            gs.get_state_data().board[i as usize].rank_suit_string()
-                        );
+                        for i in 0..board_cnt {
+                            print!(
+                                "{} ",
+                                gs.get_state_data().board[i as usize].rank_suit_string()
+                            );
+                        }
+                        println!();
                     }
-                    println!();
                 }
             } else {
                 let p_to_move = gs.get_player_to_move();
-                print!("Player {}'s turn: ", p_to_move);
+                gs.create_children();
 
-                let (card_tensor, action_tensor) = self.hand_state.as_ref().unwrap().to_input(
+                if !silent {
+                    print!("Player {}'s turn: ", p_to_move);
+                }
+
+                let action_index = agents[p_to_move as usize].as_ref().choose_action(
+                    self.hand_state.as_ref().unwrap(),
+                    &gs.get_valid_actions_mask(),
                     gs.get_state_data().street,
                     self.action_config,
                     device,
-                    self.hand_state.as_ref().unwrap().action_states.len(),
-                )?;
-
-                let proba_tensor = network
-                    .forward_embedding_actor(
-                        &card_tensor.unsqueeze(0)?,
-                        &action_tensor.unsqueeze(0)?,
-                    )?
-                    .detach()?;
-
-                gs.create_children();
-
-                let valid_actions_mask = gs.get_valid_actions_mask();
-                let action_index = AgentNetwork::choose_action_from_net(
-                    &proba_tensor,
-                    &valid_actions_mask,
-                    no_invalid_for_traverser,
+                    true,
                 )?;
 
                 gs = gs.get_child(action_index).as_mut().unwrap();
 
-                print!(
-                    "{} ({} {})",
-                    gs.get_state_data()
-                        .history
-                        .last()
-                        .unwrap()
-                        ._to_print_string(),
-                    gs.get_state_data().bets[p_to_move as usize],
-                    gs.get_state_data().stacks[p_to_move as usize],
-                );
-                println!();
+                if !silent {
+                    print!(
+                        "{} ({} {})",
+                        gs.get_state_data()
+                            .history
+                            .last()
+                            .unwrap()
+                            ._to_print_string(),
+                        gs.get_state_data().bets[p_to_move as usize],
+                        gs.get_state_data().stacks[p_to_move as usize],
+                    );
+                    println!();
+                }
             }
         }
-
-        println!();
-        print!("Rewards: ");
-        for i in 0..self.player_cnt {
-            print!("{} ", gs.get_reward(i));
+        if !silent {
+            println!();
+            print!("Rewards: ");
+            for i in 0..self.player_cnt {
+                print!("{} ", gs.get_reward(i));
+            }
+            println!();
         }
-        println!();
 
-        Ok(())
+        let rewards = (0..self.player_cnt)
+            .map(|i| gs.get_reward(i))
+            .collect::<Vec<f32>>();
+
+        Ok(rewards)
     }
 }

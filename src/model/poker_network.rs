@@ -6,7 +6,7 @@ use crate::game::action::ActionConfig;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::{VarBuilder, VarMap};
 
-pub struct PokerNetwork<'a> {
+pub struct PokerNetwork {
     siamese_network: SiameseNetworkConv,
     // siamese_network: SiameseNetworkLinear,
     actor_network: ActorNetwork,
@@ -14,15 +14,15 @@ pub struct PokerNetwork<'a> {
     pub var_map: VarMap,
 
     player_cnt: u32,
-    action_config: &'a ActionConfig,
+    action_config: ActionConfig,
     device: Device,
     train: bool,
 }
 
-impl<'a> PokerNetwork<'a> {
+impl PokerNetwork {
     pub fn new(
         player_count: u32,
-        action_config: &ActionConfig,
+        action_config: ActionConfig,
         device: Device,
         train: bool,
     ) -> Result<PokerNetwork, Box<dyn std::error::Error>> {
@@ -88,12 +88,12 @@ impl<'a> PokerNetwork<'a> {
     // }
 }
 
-impl<'a> Clone for PokerNetwork<'a> {
+impl Clone for PokerNetwork {
     // The clone is not trainable
-    fn clone(&self) -> PokerNetwork<'a> {
+    fn clone(&self) -> PokerNetwork {
         let mut copy_net = Self::new(
             self.player_cnt,
-            self.action_config,
+            self.action_config.clone(),
             self.device.clone(),
             false,
         )

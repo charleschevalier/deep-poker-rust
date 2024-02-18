@@ -5,11 +5,17 @@ use candle_core::Tensor;
 
 use rand::distributions::Distribution;
 
-pub struct AgentNetwork<'a> {
-    network: PokerNetwork<'a>,
+pub struct AgentNetwork {
+    network: PokerNetwork,
 }
 
-impl<'a> Agent<'a> for AgentNetwork<'a> {
+impl Agent for AgentNetwork {
+    fn clone_box(&self) -> Box<dyn Agent> {
+        Box::new(AgentNetwork {
+            network: self.network.clone(),
+        })
+    }
+
     fn choose_action(
         &self,
         hand_state: &HandState,
@@ -17,6 +23,7 @@ impl<'a> Agent<'a> for AgentNetwork<'a> {
         street: u8,
         action_config: &crate::game::action::ActionConfig,
         device: &candle_core::Device,
+        no_invalid: bool,
     ) -> Result<usize, Box<dyn std::error::Error>> {
         let (card_tensor, action_tensor) = hand_state.to_input(
             street,
@@ -30,11 +37,11 @@ impl<'a> Agent<'a> for AgentNetwork<'a> {
             .forward_embedding_actor(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?
             .detach()?;
 
-        Self::choose_action_from_net(&proba_tensor, valid_actions_mask, true)
+        Self::choose_action_from_net(&proba_tensor, valid_actions_mask, no_invalid)
     }
 }
 
-impl<'a> AgentNetwork<'a> {
+impl AgentNetwork {
     pub fn new(network: PokerNetwork) -> AgentNetwork {
         AgentNetwork { network }
     }
@@ -54,7 +61,7 @@ impl<'a> AgentNetwork<'a> {
 
         // Normalize probas
         let sum_norm: f32 = probas.iter().sum();
-        if sum_norm > 0.0 {
+        if sum_norm > 1e-8 {
             for p in &mut probas {
                 *p /= sum_norm;
             }
