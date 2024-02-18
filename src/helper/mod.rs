@@ -1,6 +1,6 @@
 use candle_core::Tensor;
 
-pub fn check_tensor(tensor: &Tensor) -> Result<(), Box<dyn std::error::Error>> {
+pub fn _check_tensor(tensor: &Tensor) -> Result<(), Box<dyn std::error::Error>> {
     // Check for NaN
     let flat_flat_vec = tensor
         .copy()
@@ -13,9 +13,9 @@ pub fn check_tensor(tensor: &Tensor) -> Result<(), Box<dyn std::error::Error>> {
 
     let mut err: String = String::new();
 
-    if flat_flat_vec.iter().any(|x: &f32| x.abs() > 50.0) {
-        err += "HIGH in tensor\n";
-    }
+    // if flat_flat_vec.iter().any(|x: &f32| x.abs() > 50.0) {
+    //     err += "HIGH in tensor\n";
+    // }
 
     if flat_flat_vec.iter().any(|x: &f32| x.is_nan()) {
         err += "NaN in tensor\n";
@@ -28,7 +28,7 @@ pub fn check_tensor(tensor: &Tensor) -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-pub fn fast_flatten(tensor: &Tensor) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+pub fn _fast_flatten(tensor: &Tensor) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
     Ok(tensor
         .copy()
         .unwrap()

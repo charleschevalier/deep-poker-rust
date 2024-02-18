@@ -1,16 +1,13 @@
 use candle_core::{Module, Tensor};
-use candle_nn::{conv2d, linear, BatchNorm, Conv2d, Conv2dConfig, Linear, VarBuilder};
+use candle_nn::{conv2d, linear, Conv2d, Conv2dConfig, Linear, VarBuilder};
 
 pub struct SiameseNetworkConv {
     card_conv_layer_1: Conv2d,
     card_conv_layer_2: Conv2d,
-    // card_batch_norm: BatchNorm,
     action_conv_layer_1: Conv2d,
     action_conv_layer_2: Conv2d,
-    // action_batch_norm: BatchNorm,
     merge_layer: Linear,
     output_layer: Linear,
-    // output_batch_norm: BatchNorm,
 }
 
 impl SiameseNetworkConv {
@@ -83,12 +80,6 @@ impl SiameseNetworkConv {
             vb.pp("siamese_card_conv_2"),
         )?;
 
-        // let card_batch_norm = candle_nn::batch_norm(
-        //     6 * conv_factor as usize * conv_factor as usize,
-        //     1e-3,
-        //     vb.pp("xxxsiamese_card_batch_norm"),
-        // )?;
-
         let action_conv_layer_1 = conv2d(
             max_action_per_street_cnt * 4,
             max_action_per_street_cnt * 4 * conv_factor as usize,
@@ -115,17 +106,6 @@ impl SiameseNetworkConv {
             vb.pp("siamese_action_conv_2"),
         )?;
 
-        // let action_batch_norm = candle_nn::batch_norm(
-        //     max_action_per_street_cnt * 4 * conv_factor as usize * conv_factor as usize,
-        //     1e-3,
-        //     vb.pp("xxxsiamese_action_batch_norm"),
-        // )?;
-
-        // println!("Action conv shape: {:?}", action_conv.weight().shape());
-
-        // println!("final_card_conv_size: {}", final_card_conv_size);
-        // println!("final_action_conv_size: {}", final_action_conv_size);
-
         let merge_layer = linear(
             final_card_conv_size as usize + final_action_conv_size as usize,
             1024,
@@ -134,19 +114,13 @@ impl SiameseNetworkConv {
 
         let output_layer = linear(1024, 1024, vb.pp("siamese_output"))?;
 
-        // let output_batch_norm =
-        //     candle_nn::batch_norm(1024, 1e-3, vb.pp("siamese_output_batch_norm"))?;
-
         Ok(SiameseNetworkConv {
             card_conv_layer_1,
             card_conv_layer_2,
-            // card_batch_norm,
             action_conv_layer_1,
             action_conv_layer_2,
-            // action_batch_norm,
             merge_layer,
             output_layer,
-            // output_batch_norm,
         })
     }
 
@@ -154,11 +128,7 @@ impl SiameseNetworkConv {
         &self,
         card_tensor: &Tensor,
         action_tensor: &Tensor,
-        train: bool,
     ) -> Result<Tensor, candle_core::Error> {
-        // println!("card_tensor shape: {:?}", card_tensor.shape());
-        // println!("action_tensor shape: {:?}", action_tensor.shape());
-
         // Card Output
         let mut card_output = self.card_conv_layer_1.forward(card_tensor)?;
         // println!("Card output shape 1: {:?}", card_output.shape());
@@ -166,7 +136,6 @@ impl SiameseNetworkConv {
         // println!("Card output shape 2: {:?}", card_output.shape());
         card_output = self.card_conv_layer_2.forward(&card_output)?;
         // println!("Card output shape 3: {:?}", card_output.shape());
-        // card_output = card_output.apply_t(&self.card_batch_norm, train)?;
 
         // Action Output
         let mut action_output = self.action_conv_layer_1.forward(action_tensor)?;
@@ -175,7 +144,6 @@ impl SiameseNetworkConv {
         // println!("Action output shape 2: {:?}", action_output.shape());
         action_output = self.action_conv_layer_2.forward(&action_output)?;
         // println!("Action output shape 3: {:?}", action_output.shape());
-        // action_output = action_output.apply_t(&self.action_batch_norm, train)?;
 
         let card_output_flat = card_output.flatten(1, 3)?;
         let action_output_flat = action_output.flatten(1, 3)?;
@@ -191,7 +159,6 @@ impl SiameseNetworkConv {
         merged_output.relu()?;
         merged_output = self.output_layer.forward(&merged_output)?;
         merged_output.relu()?;
-        // merged_output.apply_t(&self.output_batch_norm, train)?;
 
         Ok(merged_output)
     }

@@ -157,7 +157,6 @@ impl<'a> Tree<'a> {
                     .forward_embedding_actor(
                         &card_tensor.unsqueeze(0)?,
                         &action_tensor.unsqueeze(0)?,
-                        false,
                     )?
                     .detach()?;
 
@@ -313,7 +312,7 @@ impl<'a> Tree<'a> {
                 let action_tensor = Tensor::new(action_vecs, device)?.unsqueeze(0)?;
 
                 let proba_tensor = network
-                    .forward_embedding_actor(&card_tensor, &action_tensor, false)?
+                    .forward_embedding_actor(&card_tensor, &action_tensor)?
                     .detach()?;
 
                 let is_suited = suit1 == suit2;
@@ -525,7 +524,6 @@ impl<'a> Tree<'a> {
                     .forward_embedding_actor(
                         &card_tensor.unsqueeze(0)?,
                         &action_tensor.unsqueeze(0)?,
-                        false,
                     )?
                     .detach()?;
 

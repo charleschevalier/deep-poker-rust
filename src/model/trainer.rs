@@ -7,9 +7,8 @@ use crate::agent::agent_pool::AgentPool;
 use crate::game::action::ActionConfig;
 use crate::game::hand_state::HandState;
 use crate::game::tree::Tree;
-use crate::helper;
 use candle_core::{Device, Tensor};
-use candle_nn::{AdamW, Optimizer};
+use candle_nn::Optimizer;
 
 use std::path::Path;
 
@@ -156,7 +155,7 @@ impl<'a> Trainer<'a> {
 
             // Run all states through network. Detach to prevent gradient updates
             let old_embedding = trained_network
-                .forward_embedding(&card_input_tensor, &action_input_tensor, false)?
+                .forward_embedding(&card_input_tensor, &action_input_tensor)?
                 .detach()?;
 
             let base_actor_outputs = trained_network.forward_actor(&old_embedding)?.detach()?;
@@ -196,23 +195,21 @@ impl<'a> Trainer<'a> {
 
             for _update_step in 0..self.trainer_config.update_step {
                 // Get embedding
-                let embedding = trained_network.forward_embedding(
-                    &card_input_tensor,
-                    &action_input_tensor,
-                    true,
-                )?;
+                let embedding =
+                    trained_network.forward_embedding(&card_input_tensor, &action_input_tensor)?;
 
                 // Run actor
                 let actor_outputs = trained_network.forward_actor(&embedding)?;
-                let probs_log_tensor = actor_outputs
+                let probs_tensor = (actor_outputs
                     .gather(&action_indexes_tensor, 1)?
                     .squeeze(1)?
-                    .log()?;
+                    + 1e-10)?;
+                let probs_log_tensor = probs_tensor.log()?;
 
                 // Get trinal clip policy loss (we use a copy of the output tensor or we have issues with backprop)
                 let policy_loss = self.get_trinal_clip_policy_loss(
                     &advantage_tensor,
-                    &probs_log_tensor.copy()?.detach()?,
+                    &probs_log_tensor,
                     &old_probs_log_tensor,
                 );
 
@@ -254,108 +251,20 @@ impl<'a> Trainer<'a> {
                     .for_each(|(k, v)| {
                         let grad_policy = gradients_policy.get_id(v.id());
                         let grad_value = gradients_value.get_id(v.id());
-                        let mut has_error = false;
-
-                        // println!("KEY: {}", k);
-
-                        if let Err(err) = helper::check_tensor(v) {
-                            println!("value: {:?}", helper::fast_flatten(v));
-                            println!("value error at key {}: {}", k, err);
-                            has_error = true;
-                        }
-
-                        if grad_policy.is_some() {
-                            if let Err(err) = helper::check_tensor(grad_policy.unwrap()) {
-                                println!(
-                                    "grad_policy: {:?}",
-                                    helper::fast_flatten(grad_policy.unwrap())
-                                );
-                                println!("grad_policy error at key {}: {}", k, err);
-                                has_error = true;
-                            }
-                        }
-                        if grad_value.is_some() {
-                            if let Err(err) = helper::check_tensor(grad_value.unwrap()) {
-                                println!(
-                                    "grad_value: {:?}",
-                                    helper::fast_flatten(grad_value.unwrap())
-                                );
-                                println!("grad_value error at key {}: {}", k, err);
-                                has_error = true;
-                            }
-                        }
 
                         if k.starts_with("siamese") && grad_policy.is_some() && grad_value.is_some()
                         {
-                            // let final_grad_policy = grad_policy
-                            //     .unwrap()
-                            //     .copy()
-                            //     .unwrap()
-                            //     .clamp(-1.0, 1.0)
-                            //     .unwrap();
-                            // let final_grad_value = grad_value
-                            //     .unwrap()
-                            //     .copy()
-                            //     .unwrap()
-                            //     .clamp(-1.0, 1.0)
-                            //     .unwrap();
-
-                            // println!("KEY: {}", k);
-                            // println!(
-                            //     "final_grad_policy: {:?}",
-                            //     helper::fast_flatten(&final_grad_policy)
-                            // );
-                            // println!(
-                            //     "final_grad_value: {:?}",
-                            //     helper::fast_flatten(&final_grad_value)
-                            // );
-                            // println!("value: {:?}", helper::fast_flatten(v));
-
-                            // let grad_weighted = ((final_grad_policy * 0.5).unwrap()
-                            //     + (final_grad_value * 0.5).unwrap())
-                            // .unwrap();
-
                             let grad_weighted = ((grad_policy.unwrap() * 0.5).unwrap()
                                 + (grad_value.unwrap() * 0.5).unwrap())
                             .unwrap();
-
-                            if let Err(err) = helper::check_tensor(&grad_weighted) {
-                                println!(
-                                    "grad_weighted: {:?}",
-                                    helper::fast_flatten(&grad_weighted)
-                                );
-                                println!("grad_weighted error at key {}: {}", k, err);
-                                has_error = true;
-                            }
-
                             gradients_embedding.insert(v, grad_weighted);
-                        }
-
-                        if has_error {
-                            panic!("Error in gradients");
                         }
                     });
 
-                // // Do backprop
+                // Do backprop
                 optimizer_policy.step(&gradients_policy)?;
                 optimizer_critic.step(&gradients_value)?;
                 optimizer_embedding.step(&gradients_embedding)?;
-                // optimizer_embedding.step(&gradients_value)?;
-
-                // Check if varmap is ok
-                trained_network
-                    .var_map
-                    .data()
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .for_each(|(k, v)| {
-                        if let Err(err) = helper::check_tensor(v) {
-                            println!("AFTER value: {:?}", helper::fast_flatten(v));
-                            println!("AFTER value error: {}", err);
-                            panic!("Error in varmap at key {}", k);
-                        }
-                    });
             }
 
             self.tree.print_first_actions(
