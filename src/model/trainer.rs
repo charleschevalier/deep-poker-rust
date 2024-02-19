@@ -47,7 +47,7 @@ impl<'a> Trainer<'a> {
         let reward_gamma = 0.999;
         let log_epsilon = 1e-10;
         let entropy_beta = 0.01;
-        let epsilon_greedy = 0.1;
+        let epsilon_greedy = 0.05; // 5% of random actions at start
         let epsilon_greedy_decay: f32 = 0.9999;
 
         let trained_network = Arc::new(Mutex::new(PokerNetwork::new(

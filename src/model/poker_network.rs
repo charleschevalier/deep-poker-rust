@@ -1,14 +1,12 @@
 use super::actor_network::ActorNetwork;
 use super::critic_network::CriticNetwork;
-use super::siamese_network_conv::SiameseNetworkConv;
-// use super::siamese_network_linear::SiameseNetworkLinear;
+use super::siamese_network::SiameseNetwork;
 use crate::game::action::ActionConfig;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::{VarBuilder, VarMap};
 
 pub struct PokerNetwork {
-    siamese_network: SiameseNetworkConv,
-    // siamese_network: SiameseNetworkLinear,
+    siamese_network: SiameseNetwork,
     actor_network: ActorNetwork,
     critic_network: CriticNetwork,
     pub var_map: VarMap,
@@ -29,7 +27,7 @@ impl PokerNetwork {
         let var_map = VarMap::new();
         let vb = VarBuilder::from_varmap(&var_map, DType::F32, &device);
 
-        let siamese_network = SiameseNetworkConv::new(
+        let siamese_network = SiameseNetwork::new(
             // let siamese_network = SiameseNetworkLinear::new(
             player_count,
             3 + action_config.postflop_raise_sizes.len() as u32, // Each raise size + fold, call, check

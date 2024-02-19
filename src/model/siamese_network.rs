@@ -1,7 +1,7 @@
 use candle_core::{Module, Tensor};
 use candle_nn::{conv2d, linear, Conv2d, Conv2dConfig, Linear, VarBuilder};
 
-pub struct SiameseNetworkConv {
+pub struct SiameseNetwork {
     card_conv_layer_1: Conv2d,
     card_conv_layer_2: Conv2d,
     action_conv_layer_1: Conv2d,
@@ -10,13 +10,13 @@ pub struct SiameseNetworkConv {
     output_layer: Linear,
 }
 
-impl SiameseNetworkConv {
+impl SiameseNetwork {
     pub fn new(
         player_count: u32,
         action_abstraction_count: u32,
         max_action_per_street_cnt: usize,
         vb: &VarBuilder,
-    ) -> Result<SiameseNetworkConv, Box<dyn std::error::Error>> {
+    ) -> Result<SiameseNetwork, Box<dyn std::error::Error>> {
         let conv_factor = 2;
 
         let card_input_size = (13, 4);
@@ -114,7 +114,7 @@ impl SiameseNetworkConv {
 
         let output_layer = linear(1024, 1024, vb.pp("siamese_output"))?;
 
-        Ok(SiameseNetworkConv {
+        Ok(SiameseNetwork {
             card_conv_layer_1,
             card_conv_layer_2,
             action_conv_layer_1,
