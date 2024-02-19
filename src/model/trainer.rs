@@ -151,14 +151,14 @@ impl<'a> Trainer<'a> {
             // Run all states through network. Detach to prevent gradient updates
             let old_embedding = trained_network.lock().unwrap()
                 .forward_embedding(&card_input_tensor, &action_input_tensor)?
-                .detach()?;
+                .detach();
 
-            let base_actor_outputs = trained_network.lock().unwrap().forward_actor(&old_embedding)?.detach()?;
+            let base_actor_outputs = trained_network.lock().unwrap().forward_actor(&old_embedding)?.detach();
 
             let base_critic_outputs = trained_network.lock().unwrap()
                 .forward_critic(&old_embedding)?
                 .unwrap()
-                .detach()?;
+                .detach();
 
             let old_probs_tensor = (base_actor_outputs
                 .gather(&action_indexes_tensor, 1)?
@@ -210,16 +210,26 @@ impl<'a> Trainer<'a> {
                 );
 
                 println!(
-                    "Policy loss: {:?}",
+                    "Policy loss before entropy: {:?}",
                     policy_loss.as_ref().unwrap().to_scalar::<f32>()
                 );
 
                 // Calculate entropy regularization
-                let entropy = (probs_tensor.as_ref() * probs_log_tensor.as_ref())?.sum(1)?.mean(0)?;
+                let entropy = (actor_outputs.detach() * (actor_outputs.detach() + log_epsilon)?.log()?)?.sum(1)?.mean(0)?;
                 let beta = 0.01;
-                
+
+                println!(
+                    "Entropy loss: {:?}",
+                    entropy.as_ref().to_scalar::<f32>()
+                );
+
                 // Add entropy to loss
                 policy_loss = policy_loss - (entropy * beta)?;
+
+                println!(
+                    "Final policy loss: {:?}",
+                    policy_loss.as_ref().unwrap().to_scalar::<f32>()
+                );
 
                 let gradients_policy = policy_loss?.backward()?;
 

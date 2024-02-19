@@ -35,7 +35,7 @@ impl Agent for AgentNetwork {
         let proba_tensor = self
             .network
             .forward_embedding_actor(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?
-            .detach()?;
+            .detach();
 
         Self::choose_action_from_net(&proba_tensor, valid_actions_mask, no_invalid)
     }

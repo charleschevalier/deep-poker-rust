@@ -290,7 +290,7 @@ impl<'a> Tree<'a> {
                     .lock()
                     .unwrap()
                     .forward_embedding_actor(&card_tensor, &action_tensor)?
-                    .detach()?;
+                    .detach();
 
                 let is_suited = suit1 == suit2;
 
