@@ -13,13 +13,15 @@ use itertools::Itertools;
 
 #[derive(Clone)]
 pub struct AgentPool {
+    agent_count: u32,
     agents: Arc<Mutex<Vec<Box<dyn Agent>>>>,
     agent_random: Arc<Mutex<Box<dyn Agent>>>,
 }
 
 impl AgentPool {
-    pub fn new() -> AgentPool {
+    pub fn new(agent_count: u32) -> AgentPool {
         AgentPool {
+            agent_count,
             agents: Arc::new(Mutex::new(Vec::new())),
             agent_random: Arc::new(Mutex::new(Box::new(AgentRandom {}))),
         }
@@ -42,15 +44,15 @@ impl AgentPool {
 
         let mut rng = rand::thread_rng();
 
-        // Return random agent 10% of the time
-        let random_float_0_1: f32 = rng.gen();
-        if random_float_0_1 <= 0.10 {
-            return (-1, self.agent_random.lock().unwrap().clone_box());
-        }
+        // // Return random agent 10% of the time
+        // let random_float_0_1: f32 = rng.gen();
+        // if random_float_0_1 <= 0.10 {
+        //     return (-1, self.agent_random.lock().unwrap().clone_box());
+        // }
 
-        // Get random index in the last 10 networks in self.agents
-        let rand_index = if agents.len() >= 10 {
-            rng.gen_range(agents.len() - 10..agents.len())
+        // Get random index in the last agent_count networks in self.agents
+        let rand_index = if agents.len() >= self.agent_count as usize {
+            rng.gen_range(agents.len() - (self.agent_count as usize)..agents.len())
         } else {
             rng.gen_range(0..agents.len())
         };
@@ -71,12 +73,14 @@ impl AgentPool {
         );
 
         let iterations_per_match = 100;
-        let wanted_agents = 10;
+        let wanted_agents = self.agent_count as usize;
         let max_agents_per_pool = player_count * 2;
         let available_agent_cnt = model_files.len();
 
-        if model_files.len() < wanted_agents {
+        if model_files.len() <= wanted_agents {
             // Load everything and return
+            println!("Less than wanted agent cnt, loading all");
+            self.update_agents(player_count, action_config, model_files, device)?;
             return Ok(());
         }
 
@@ -221,13 +225,7 @@ impl AgentPool {
             .map(|x| model_files[*x].clone())
             .collect();
 
-        self.agents.lock().unwrap().clear();
-        for agent_file in final_agents_files.iter() {
-            let mut network =
-                PokerNetwork::new(player_count, action_config.clone(), device.clone(), false)?;
-            network.var_map.load(agent_file.as_str())?;
-            self.add_agent(Box::new(AgentNetwork::new(network)));
-        }
+        self.update_agents(player_count, action_config, &final_agents_files, device)?;
 
         // Print selected agents
         println!("Selected agents:");
@@ -235,6 +233,23 @@ impl AgentPool {
             println!("{}", agent_file);
         }
 
+        Ok(())
+    }
+
+    fn update_agents(
+        &mut self,
+        player_count: u32,
+        action_config: &ActionConfig,
+        agent_files: &[String],
+        device: &candle_core::Device,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.agents.lock().unwrap().clear();
+        for agent_file in agent_files.iter() {
+            let mut network =
+                PokerNetwork::new(player_count, action_config.clone(), device.clone(), false)?;
+            network.var_map.load(agent_file.as_str())?;
+            self.add_agent(Box::new(AgentNetwork::new(network)));
+        }
         Ok(())
     }
 }

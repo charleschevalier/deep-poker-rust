@@ -26,6 +26,7 @@ fn main() {
         no_invalid_for_traverser: true,
         new_agent_interval: 100,
         save_interval: 100,
+        agent_count: 20,
     };
 
     let device = Device::cuda_if_available(0).unwrap();

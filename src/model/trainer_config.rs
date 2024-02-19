@@ -8,4 +8,5 @@ pub struct TrainerConfig {
     pub no_invalid_for_traverser: bool,
     pub new_agent_interval: u32,
     pub save_interval: u32,
+    pub agent_count: u32,
 }

@@ -54,7 +54,7 @@ impl<'a> Trainer<'a> {
             true,
         )?));
 
-        let agent_pool = Arc::new(Mutex::new(AgentPool::new()));
+        let agent_pool = Arc::new(Mutex::new(AgentPool::new(self.trainer_config.agent_count)));
 
         // Load previous training
         let latest_iteration = self.load_existing(&trained_network, &agent_pool)?;
@@ -302,7 +302,7 @@ impl<'a> Trainer<'a> {
 
             // Put a new agent in the pool every 100 iterations
             if iteration % self.trainer_config.new_agent_interval as usize == 0 {
-                agent_pool.lock().unwrap().add_agent(Box::new(AgentNetwork::new(trained_network.lock().unwrap().clone())));
+                self.refresh_agents(&agent_pool)?;
             }
         }
 
