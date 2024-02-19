@@ -1,4 +1,5 @@
 use candle_core::Tensor;
+use rand::Rng;
 use std::sync::{Arc, Mutex};
 
 use super::action::ActionConfig;
@@ -49,6 +50,7 @@ impl<'a> Tree<'a> {
         agents: &Vec<Box<dyn Agent>>,
         device: &candle_core::Device,
         no_invalid_for_traverser: bool,
+        epsilon_greedy: f32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.reset(traverser);
 
@@ -59,6 +61,7 @@ impl<'a> Tree<'a> {
             self.action_config,
             device,
             no_invalid_for_traverser,
+            epsilon_greedy,
         )?;
         // println!(
         //     "Action states length: {}",
@@ -75,6 +78,7 @@ impl<'a> Tree<'a> {
         action_config: &ActionConfig,
         device: &candle_core::Device,
         no_invalid_for_traverser: bool,
+        epsilon_greedy: f32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // If state is None, panic
         if state_option.is_none() {
@@ -131,6 +135,7 @@ impl<'a> Tree<'a> {
                 action_config,
                 device,
                 no_invalid_for_traverser,
+                epsilon_greedy,
             );
         } else {
             // Traverse next player
@@ -141,20 +146,34 @@ impl<'a> Tree<'a> {
 
             let valid_actions_mask = state.get_valid_actions_mask();
 
-            let action_index = agents[state.get_player_to_move() as usize]
-                .as_ref()
-                .choose_action(
-                    hand_state,
-                    &valid_actions_mask,
-                    state.get_state_data().street,
-                    action_config,
-                    device,
-                    if state.get_player_to_move() == traverser as i32 {
-                        no_invalid_for_traverser
-                    } else {
-                        true
-                    },
-                )?;
+            let mut rng = rand::thread_rng();
+            let random_float_0_1: f32 = rng.gen();
+
+            let action_index = if random_float_0_1 >= epsilon_greedy {
+                agents[state.get_player_to_move() as usize]
+                    .as_ref()
+                    .choose_action(
+                        hand_state,
+                        &valid_actions_mask,
+                        state.get_state_data().street,
+                        action_config,
+                        device,
+                        if state.get_player_to_move() == traverser as i32 {
+                            no_invalid_for_traverser
+                        } else {
+                            true
+                        },
+                    )?
+            } else {
+                // Epsilon greedy, we choose a random action to favor exploration
+                let mut action_index = rng.gen_range(0..valid_actions_mask.len());
+                while (traverser as i32 != state.get_player_to_move() || no_invalid_for_traverser)
+                    && !valid_actions_mask[action_index]
+                {
+                    action_index = rng.gen_range(0..valid_actions_mask.len());
+                }
+                action_index
+            };
 
             if action_index > valid_actions_mask.len() || !valid_actions_mask[action_index] {
                 if state.get_player_to_move() == traverser as i32 {
@@ -190,6 +209,7 @@ impl<'a> Tree<'a> {
                 action_config,
                 device,
                 no_invalid_for_traverser,
+                epsilon_greedy,
             )?;
         }
 

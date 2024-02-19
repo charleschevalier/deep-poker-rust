@@ -46,6 +46,9 @@ impl<'a> Trainer<'a> {
         let gae_lambda = 0.95;
         let reward_gamma = 0.999;
         let log_epsilon = 1e-10;
+        let entropy_beta = 0.01;
+        let epsilon_greedy = 0.1;
+        let epsilon_greedy_decay: f32 = 0.9999;
 
         let trained_network = Arc::new(Mutex::new(PokerNetwork::new(
             self.player_cnt,
@@ -81,7 +84,7 @@ impl<'a> Trainer<'a> {
             println!("Iteration: {}", iteration);
 
             // Rollout hands and build hand states
-            let mut hand_states = self.build_hand_states(&trained_network, &agent_pool)?;
+            let mut hand_states = self.build_hand_states(&trained_network, &agent_pool, epsilon_greedy * epsilon_greedy_decay.powi(iteration as i32))?;
 
             // Calculate cumulative rewards for each hand state
             let mut rewards_by_hand_state = Vec::new();
@@ -214,9 +217,8 @@ impl<'a> Trainer<'a> {
                     policy_loss.as_ref().unwrap().to_scalar::<f32>()
                 );
 
-                // Calculate entropy regularization
+                // Calculate entropy regularization, to encourage exploration
                 let entropy = (actor_outputs.detach() * (actor_outputs.detach() + log_epsilon)?.log()?)?.sum(1)?.mean(0)?;
-                let beta = 0.01;
 
                 println!(
                     "Entropy loss: {:?}",
@@ -224,7 +226,7 @@ impl<'a> Trainer<'a> {
                 );
 
                 // Add entropy to loss
-                policy_loss = policy_loss - (entropy * beta)?;
+                policy_loss = policy_loss - (entropy * entropy_beta)?;
 
                 println!(
                     "Final policy loss: {:?}",
@@ -330,6 +332,7 @@ impl<'a> Trainer<'a> {
         &self,
         trained_network: &Arc<Mutex<PokerNetwork>>,
         agent_pool: &Arc<Mutex<AgentPool>>,
+        epsilon_greedy: f32,
     ) -> Result<Vec<HandState>, Box<dyn std::error::Error>> {
         let hand_states_base = Arc::new(Mutex::new(Vec::new()));
 
@@ -372,6 +375,7 @@ impl<'a> Trainer<'a> {
                             &agents,
                             &device,
                             no_invalid_for_traverser,
+                            epsilon_greedy
                         )
                         .is_err()
                     {
