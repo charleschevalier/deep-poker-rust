@@ -203,7 +203,7 @@ impl<'a> Trainer<'a> {
                 let probs_log_tensor = probs_tensor.log()?;
 
                 // Get trinal clip policy loss
-                let policy_loss = self.get_trinal_clip_policy_loss(
+                let mut policy_loss = self.get_trinal_clip_policy_loss(
                     &advantage_tensor,
                     &probs_log_tensor,
                     &old_probs_log_tensor,
@@ -213,6 +213,13 @@ impl<'a> Trainer<'a> {
                     "Policy loss: {:?}",
                     policy_loss.as_ref().unwrap().to_scalar::<f32>()
                 );
+
+                // Calculate entropy regularization
+                let entropy = (probs_tensor.as_ref() * probs_log_tensor.as_ref())?.sum(1)?.mean(0)?;
+                let beta = 0.01;
+                
+                // Add entropy to loss
+                policy_loss = policy_loss - (entropy * beta)?;
 
                 let gradients_policy = policy_loss?.backward()?;
 
