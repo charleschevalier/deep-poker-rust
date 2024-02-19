@@ -138,10 +138,7 @@ impl<'a> Tree<'a> {
                 epsilon_greedy,
             );
         } else {
-            // Traverse next player
-            // TODO: Get single state from strategy
-            // Get rand, random number between 0 and state.get_child_count()
-
+            // Traverse for player to move
             state.create_children();
 
             let valid_actions_mask = state.get_valid_actions_mask();
@@ -149,6 +146,7 @@ impl<'a> Tree<'a> {
             let mut rng = rand::thread_rng();
             let random_float_0_1: f32 = rng.gen();
 
+            // Regular traversal, we choose an action from the network
             let action_index = if random_float_0_1 >= epsilon_greedy {
                 agents[state.get_player_to_move() as usize]
                     .as_ref()
@@ -176,7 +174,7 @@ impl<'a> Tree<'a> {
             };
 
             if action_index > valid_actions_mask.len() || !valid_actions_mask[action_index] {
-                if state.get_player_to_move() == traverser as i32 {
+                if state.get_player_to_move() == traverser as i32 && !no_invalid_for_traverser {
                     hand_state.action_states.push(Self::build_action_state(
                         traverser,
                         state,
@@ -191,7 +189,7 @@ impl<'a> Tree<'a> {
                     );
                     return Ok(());
                 } else {
-                    panic!("Invalid action index");
+                    panic!("Invalid action index in tree traversal");
                 }
             }
 
