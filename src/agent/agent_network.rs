@@ -1,4 +1,4 @@
-use super::Agent;
+use super::{Agent, AgentClone};
 use crate::game::hand_state::HandState;
 use crate::model::poker_network::PokerNetwork;
 use candle_core::Tensor;
@@ -9,13 +9,21 @@ pub struct AgentNetwork {
     network: PokerNetwork,
 }
 
-impl Agent for AgentNetwork {
+impl AgentClone for AgentNetwork {
     fn clone_box(&self) -> Box<dyn Agent> {
-        Box::new(AgentNetwork {
-            network: self.network.clone(),
-        })
+        Box::new(self.clone())
     }
+}
 
+impl Clone for AgentNetwork {
+    fn clone(&self) -> AgentNetwork {
+        AgentNetwork {
+            network: self.network.clone(),
+        }
+    }
+}
+
+impl Agent for AgentNetwork {
     fn choose_action(
         &self,
         hand_state: &HandState,
@@ -34,7 +42,11 @@ impl Agent for AgentNetwork {
 
         let proba_tensor = self
             .network
-            .forward_embedding_actor(&card_tensor.unsqueeze(0)?, &action_tensor.unsqueeze(0)?)?
+            .forward_embedding_actor(
+                &card_tensor.unsqueeze(0)?,
+                &action_tensor.unsqueeze(0)?,
+                false,
+            )?
             .detach();
 
         Self::choose_action_from_net(&proba_tensor, valid_actions_mask, no_invalid)

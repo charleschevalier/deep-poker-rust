@@ -55,8 +55,11 @@ impl PokerNetwork {
         &self,
         card_tensor: &Tensor,
         action_tensor: &Tensor,
+        train: bool,
     ) -> Result<Tensor, Box<dyn std::error::Error>> {
-        let x = self.siamese_network.forward(card_tensor, action_tensor)?;
+        let x = self
+            .siamese_network
+            .forward(card_tensor, action_tensor, train)?;
         self.actor_network.forward(&x)
     }
 
@@ -64,8 +67,11 @@ impl PokerNetwork {
         &self,
         card_tensor: &Tensor,
         action_tensor: &Tensor,
+        train: bool,
     ) -> Result<Tensor, Box<dyn std::error::Error>> {
-        Ok(self.siamese_network.forward(card_tensor, action_tensor)?)
+        Ok(self
+            .siamese_network
+            .forward(card_tensor, action_tensor, train)?)
     }
 
     pub fn forward_actor(&self, x: &Tensor) -> Result<Tensor, Box<dyn std::error::Error>> {

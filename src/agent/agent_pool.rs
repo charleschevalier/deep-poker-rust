@@ -7,57 +7,53 @@ use super::Agent;
 use super::{agent_network::AgentNetwork, agent_random::AgentRandom};
 
 use rand::Rng;
-use std::sync::{Arc, Mutex};
 
 use itertools::Itertools;
 
-#[derive(Clone)]
 pub struct AgentPool {
     agent_count: u32,
-    agents: Arc<Mutex<Vec<Box<dyn Agent>>>>,
-    agent_random: Arc<Mutex<Box<dyn Agent>>>,
+    agents: Vec<Box<dyn Agent>>,
+    agent_random: Box<dyn Agent>,
+}
+
+impl Clone for AgentPool {
+    fn clone(&self) -> AgentPool {
+        AgentPool {
+            agent_count: self.agent_count,
+            agents: self.agents.clone(),
+            agent_random: self.agent_random.clone_box(),
+        }
+    }
 }
 
 impl AgentPool {
     pub fn new(agent_count: u32) -> AgentPool {
         AgentPool {
             agent_count,
-            agents: Arc::new(Mutex::new(Vec::new())),
-            agent_random: Arc::new(Mutex::new(Box::new(AgentRandom {}))),
+            agents: Vec::new(),
+            agent_random: Box::new(AgentRandom {}),
         }
     }
 
     pub fn add_agent(&mut self, agent: Box<dyn Agent>) {
-        let mut agents = self.agents.lock().unwrap();
-        // if agents.len() > 5 {
-        //     agents.remove(0);
-        // }
-        agents.push(agent);
+        self.agents.push(agent);
     }
 
-    pub fn get_agent(&self) -> (i32, Box<dyn Agent>) {
-        let agents = self.agents.lock().unwrap();
-
-        if agents.is_empty() {
-            return (-1, self.agent_random.lock().unwrap().clone_box());
+    pub fn get_agent(&self) -> (i32, &Box<dyn Agent>) {
+        if self.agents.is_empty() {
+            return (-1, &self.agent_random);
         }
 
         let mut rng = rand::thread_rng();
 
-        // // Return random agent 10% of the time
-        // let random_float_0_1: f32 = rng.gen();
-        // if random_float_0_1 <= 0.10 {
-        //     return (-1, self.agent_random.lock().unwrap().clone_box());
-        // }
-
         // Get random index in the last agent_count networks in self.agents
-        let rand_index = if agents.len() >= self.agent_count as usize {
-            rng.gen_range(agents.len() - (self.agent_count as usize)..agents.len())
+        let rand_index = if self.agents.len() >= self.agent_count as usize {
+            rng.gen_range(self.agents.len() - (self.agent_count as usize)..self.agents.len())
         } else {
-            rng.gen_range(0..agents.len())
+            rng.gen_range(0..self.agents.len())
         };
 
-        (rand_index as i32, agents[rand_index].clone_box())
+        (rand_index as i32, &self.agents[rand_index])
     }
 
     pub fn play_tournament(
@@ -243,7 +239,7 @@ impl AgentPool {
         agent_files: &[String],
         device: &candle_core::Device,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.agents.lock().unwrap().clear();
+        self.agents.clear();
         for agent_file in agent_files.iter() {
             let mut network =
                 PokerNetwork::new(player_count, action_config.clone(), device.clone(), false)?;

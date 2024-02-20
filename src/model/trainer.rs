@@ -50,32 +50,32 @@ impl<'a> Trainer<'a> {
         let epsilon_greedy = 0.05; // 5% of random actions at start
         let epsilon_greedy_decay: f32 = 0.9999;
 
-        let trained_network = Arc::new(Mutex::new(PokerNetwork::new(
+        let mut trained_network = PokerNetwork::new(
             self.player_cnt,
             self.action_config.clone(),
             self.device.clone(),
             true,
-        )?));
+        )?;
 
-        let agent_pool = Arc::new(Mutex::new(AgentPool::new(self.trainer_config.agent_count)));
+        let mut agent_pool = AgentPool::new(self.trainer_config.agent_count);
 
         // Load previous training
-        let latest_iteration = self.load_existing(&trained_network, &agent_pool)?;
+        let latest_iteration = self.load_existing(&mut trained_network, &mut agent_pool)?;
 
         // Select best agents
-        self.refresh_agents(&agent_pool)?;
+        self.refresh_agents(&mut agent_pool)?;
 
         // Build optimizers
         let mut optimizer_embedding = candle_nn::AdamW::new_lr(
-            helper::filter_var_map_by_prefix(&trained_network.lock().unwrap().var_map, &["siamese"]),
+            helper::filter_var_map_by_prefix(&trained_network.var_map, &["siamese"]),
             self.trainer_config.learning_rate,
         )?;
         let mut optimizer_policy = candle_nn::AdamW::new_lr(
-            helper::filter_var_map_by_prefix(&trained_network.lock().unwrap().var_map, &["actor"]),
+            helper::filter_var_map_by_prefix(&trained_network.var_map, &["actor"]),
             self.trainer_config.learning_rate,
         )?;
         let mut optimizer_critic = candle_nn::AdamW::new_lr(
-            helper::filter_var_map_by_prefix(&trained_network.lock().unwrap().var_map, &["critic"]),
+            helper::filter_var_map_by_prefix(&trained_network.var_map, &["critic"]),
             self.trainer_config.learning_rate,
         )?;
 
@@ -152,13 +152,13 @@ impl<'a> Trainer<'a> {
             let action_indexes_tensor = self.get_action_indexes(&hand_states)?;
 
             // Run all states through network. Detach to prevent gradient updates
-            let old_embedding = trained_network.lock().unwrap()
-                .forward_embedding(&card_input_tensor, &action_input_tensor)?
+            let old_embedding = trained_network
+                .forward_embedding(&card_input_tensor, &action_input_tensor, false)?
                 .detach();
 
-            let base_actor_outputs = trained_network.lock().unwrap().forward_actor(&old_embedding)?.detach();
+            let base_actor_outputs = trained_network.forward_actor(&old_embedding)?.detach();
 
-            let base_critic_outputs = trained_network.lock().unwrap()
+            let base_critic_outputs = trained_network
                 .forward_critic(&old_embedding)?
                 .unwrap()
                 .detach();
@@ -195,10 +195,10 @@ impl<'a> Trainer<'a> {
             for _update_step in 0..self.trainer_config.update_step {
                 // Get embedding
                 let embedding =
-                    trained_network.lock().unwrap().forward_embedding(&card_input_tensor, &action_input_tensor)?;
+                    trained_network.forward_embedding(&card_input_tensor, &action_input_tensor, true)?;
 
                 // Run actor
-                let actor_outputs = trained_network.lock().unwrap().forward_actor(&embedding)?;
+                let actor_outputs = trained_network.forward_actor(&embedding)?;
                 let probs_tensor = (actor_outputs
                     .gather(&action_indexes_tensor, 1)?
                     .squeeze(1)?
@@ -236,7 +236,7 @@ impl<'a> Trainer<'a> {
                 let gradients_policy = policy_loss?.backward()?;
 
                 // Get critic output
-                let critic_outputs = trained_network.lock().unwrap().forward_critic(&embedding)?;
+                let critic_outputs = trained_network.forward_critic(&embedding)?;
 
                 // Get trinal clip value loss
                 let value_loss = self.get_trinal_clip_value_loss(
@@ -258,7 +258,7 @@ impl<'a> Trainer<'a> {
                 let mut gradients_embedding =
                     Tensor::zeros((), candle_core::DType::F32, &self.device)?.backward()?;
                 trained_network
-                .lock().unwrap().var_map
+                .var_map
                     .data()
                     .lock()
                     .unwrap()
@@ -299,7 +299,7 @@ impl<'a> Trainer<'a> {
             }
 
             Tree::print_first_actions(
-                &trained_network.clone(),
+                &trained_network,
                 &self.device,
                 self.trainer_config.no_invalid_for_traverser,
                 self.action_config
@@ -314,14 +314,14 @@ impl<'a> Trainer<'a> {
             // }
 
             if iteration > 0 && iteration % self.trainer_config.save_interval as usize == 0 {
-                trained_network.lock().unwrap().var_map.save(
+                trained_network.var_map.save(
                     Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration)),
                 )?;
             }
 
             // Put a new agent in the pool every 100 iterations
             if iteration % self.trainer_config.new_agent_interval as usize == 0 {
-                self.refresh_agents(&agent_pool)?;
+                self.refresh_agents(&mut agent_pool)?;
             }
         }
 
@@ -330,8 +330,8 @@ impl<'a> Trainer<'a> {
 
     fn build_hand_states(
         &self,
-        trained_network: &Arc<Mutex<PokerNetwork>>,
-        agent_pool: &Arc<Mutex<AgentPool>>,
+        trained_network: &PokerNetwork,
+        agent_pool: &AgentPool,
         epsilon_greedy: f32,
     ) -> Result<Vec<HandState>, Box<dyn std::error::Error>> {
         let hand_states_base = Arc::new(Mutex::new(Vec::new()));
@@ -341,11 +341,9 @@ impl<'a> Trainer<'a> {
 
         // Clone trained network for inference
         for _ in 0..n_workers {
-            // Clone Arc variables
             let hand_states = Arc::clone(&hand_states_base);
-            let trained_agent = AgentNetwork::new(trained_network.lock().unwrap().clone());
-            let agent_pool_clone = agent_pool.lock().unwrap().clone();
-            // Clone variables from self
+            let trained_agent: Box<dyn Agent> = Box::new(AgentNetwork::new(trained_network.clone()));
+            let agent_pool_clone = agent_pool.clone();
             let player_cnt = self.player_cnt;
             let action_config = self.action_config.clone();
             let device = self.device.clone();
@@ -353,6 +351,8 @@ impl<'a> Trainer<'a> {
             let iterations = self.trainer_config.hands_per_player_per_iteration /n_workers;
 
             thread_pool.execute(move || {
+                let mut new_hand_states = Vec::new();
+
                 for _ in 0..iterations {
                     let mut tree = Tree::new(player_cnt, &action_config);
 
@@ -363,7 +363,7 @@ impl<'a> Trainer<'a> {
                         let agent = if p != traverser {
                             agent_pool_clone.get_agent().1
                         } else {
-                            trained_agent.clone_box()
+                            &trained_agent
                         };
                         agents.push(agent);
                     }
@@ -414,10 +414,11 @@ impl<'a> Trainer<'a> {
                             continue;
                         }
 
-                        hand_states.lock().unwrap().push(hs); 
+                        new_hand_states.push(hs);
                     }
                 }
             }
+            hand_states.lock().unwrap().append(&mut new_hand_states); 
             }); 
         }
 
@@ -536,8 +537,8 @@ impl<'a> Trainer<'a> {
 
     fn load_existing(
         &self,
-        trained_network: &Arc<Mutex<PokerNetwork>>,
-        agent_pool: &Arc<Mutex<AgentPool>>,
+        trained_network: &mut PokerNetwork,
+        agent_pool: &mut AgentPool,
     ) -> Result<u32, Box<dyn std::error::Error>> {
         // List files in output path
         let trained_network_path = Path::new(&self.output_path);
@@ -562,7 +563,7 @@ impl<'a> Trainer<'a> {
         }
 
         if latest_iteration > 0 {
-            trained_network.lock().unwrap().var_map.load(
+            trained_network.var_map.load(
                 trained_network_path.join(format!("poker_network_{}.pt", latest_iteration)),
             )?;
 
@@ -585,7 +586,7 @@ impl<'a> Trainer<'a> {
                     network
                         .var_map
                         .load(trained_network_path.join(format!("poker_network_{}.pt", i)))?;
-                    agent_pool.lock().unwrap().add_agent(Box::new(AgentNetwork::new(network)));
+                    agent_pool.add_agent(Box::new(AgentNetwork::new(network)));
                 }
             }
         }
@@ -593,7 +594,7 @@ impl<'a> Trainer<'a> {
         Ok(latest_iteration)
     }
 
-    fn refresh_agents(&self, agent_pool: &Arc<Mutex<AgentPool>>) -> Result<(), Box<dyn std::error::Error>> {
+    fn refresh_agents(&self, agent_pool: &mut AgentPool) -> Result<(), Box<dyn std::error::Error>> {
         // List files in output path
         let trained_network_path = Path::new(&self.output_path);
         let trained_network_files = trained_network_path.read_dir()?;
@@ -616,6 +617,6 @@ impl<'a> Trainer<'a> {
             }
         }
 
-        agent_pool.lock().unwrap().play_tournament(self.player_cnt, self.action_config, &model_files, &self.device)
+        agent_pool.play_tournament(self.player_cnt, self.action_config, &model_files, &self.device)
     }
 }

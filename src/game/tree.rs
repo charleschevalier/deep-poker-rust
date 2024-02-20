@@ -1,6 +1,5 @@
 use candle_core::Tensor;
 use rand::Rng;
-use std::sync::{Arc, Mutex};
 
 use super::action::ActionConfig;
 use super::action_state::ActionState;
@@ -47,7 +46,7 @@ impl<'a> Tree<'a> {
     pub fn traverse(
         &mut self,
         traverser: u32,
-        agents: &Vec<Box<dyn Agent>>,
+        agents: &Vec<&Box<dyn Agent>>,
         device: &candle_core::Device,
         no_invalid_for_traverser: bool,
         epsilon_greedy: f32,
@@ -74,7 +73,7 @@ impl<'a> Tree<'a> {
     fn traverse_state(
         state_option: &mut Option<Box<dyn State<'a> + 'a>>,
         hand_state: &mut HandState,
-        agents: &Vec<Box<dyn Agent>>,
+        agents: &Vec<&Box<dyn Agent>>,
         action_config: &ActionConfig,
         device: &candle_core::Device,
         no_invalid_for_traverser: bool,
@@ -256,7 +255,7 @@ impl<'a> Tree<'a> {
     }
 
     pub fn print_first_actions(
-        network: &Arc<Mutex<PokerNetwork>>,
+        network: &PokerNetwork,
         device: &candle_core::Device,
         no_invalid_for_traverser: bool,
         action_config: &ActionConfig,
@@ -305,9 +304,7 @@ impl<'a> Tree<'a> {
                 let action_tensor = Tensor::new(action_vecs, device)?.unsqueeze(0)?;
 
                 let proba_tensor = network
-                    .lock()
-                    .unwrap()
-                    .forward_embedding_actor(&card_tensor, &action_tensor)?
+                    .forward_embedding_actor(&card_tensor, &action_tensor, false)?
                     .detach();
 
                 let is_suited = suit1 == suit2;
