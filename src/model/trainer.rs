@@ -1,5 +1,3 @@
-use std::vec;
-
 use super::poker_network::PokerNetwork;
 use super::trainer_config::TrainerConfig;
 use super::adam_optimizer::AdamWCustom;
@@ -13,9 +11,11 @@ use crate::helper;
 
 use candle_core::{Device, Tensor};
 use candle_nn::Optimizer;
+use std::vec;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use threadpool::ThreadPool;
+use std::time::Instant;
 
 pub struct Trainer<'a> {
     player_cnt: u32,
@@ -23,6 +23,8 @@ pub struct Trainer<'a> {
     trainer_config: &'a TrainerConfig,
     device: Device,
     output_path: &'a str,
+    n_workers: usize,
+    thread_pool: ThreadPool
 }
 
 impl<'a> Trainer<'a> {
@@ -33,12 +35,17 @@ impl<'a> Trainer<'a> {
         device: Device,
         output_path: &'a str,
     ) -> Trainer<'a> {
+        let n_workers = num_cpus::get() / 2;
+        let thread_pool = ThreadPool::new(n_workers);
+
         Trainer {
             player_cnt,
             action_config,
             trainer_config,
             device,
             output_path,
+            n_workers,
+            thread_pool
         }
     }
 
@@ -312,7 +319,7 @@ impl<'a> Trainer<'a> {
 
             Tree::print_first_actions(
                 &trained_network,
-                &self.device,
+                &self.trainer_config.agents_device,
                 self.trainer_config.no_invalid_for_traverser,
                 self.action_config
             )?;
@@ -346,24 +353,25 @@ impl<'a> Trainer<'a> {
         agent_pool: &AgentPool,
         epsilon_greedy: f32,
     ) -> Result<Vec<HandState>, Box<dyn std::error::Error>> {
+        let start_time = Instant::now();
         let hand_states_base = Arc::new(Mutex::new(Vec::new()));
 
-        let n_workers = num_cpus::get() - 1;
-        let thread_pool = ThreadPool::new(n_workers);
+        // let n_workers = num_cpus::get() / 2;
+        // let thread_pool = ThreadPool::new(n_workers);
 
         // Clone trained network for inference
-        for _ in 0..n_workers {
+        for _ in 0..self.n_workers {
             let hand_states = Arc::clone(&hand_states_base);
             let trained_agent: Box<dyn Agent> = Box::new(AgentNetwork::new(trained_network.clone()));
             let agent_pool_clone = agent_pool.clone();
             let player_cnt = self.player_cnt;
             let action_config = self.action_config.clone();
             let no_invalid_for_traverser = self.trainer_config.no_invalid_for_traverser;
-            let iterations = self.trainer_config.hands_per_player_per_iteration /n_workers;
+            let iterations = self.trainer_config.hands_per_player_per_iteration / self.n_workers;
             let use_epsilon_greedy = self.trainer_config.use_epsilon_greedy;
             let agent_device = self.trainer_config.agents_device.clone();
 
-            thread_pool.execute(move || {
+            self.thread_pool.execute(move || {
                 let mut new_hand_states = Vec::new();
 
                 for _ in 0..iterations {
@@ -435,7 +443,10 @@ impl<'a> Trainer<'a> {
             }); 
         }
 
-        thread_pool.join();
+        self.thread_pool.join();
+
+        let duration = start_time.elapsed();
+        println!("Rollout duration: {:?}", duration);
 
         Ok(Arc::try_unwrap(hand_states_base).unwrap().into_inner().unwrap())
     }
