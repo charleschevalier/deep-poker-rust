@@ -1,7 +1,7 @@
 mod actor_network;
+mod adam_optimizer;
 mod critic_network;
 mod siamese_network;
-// mod siamese_network_linear;
 
 pub mod poker_network;
 pub mod trainer;

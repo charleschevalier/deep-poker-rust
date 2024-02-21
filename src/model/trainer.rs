@@ -2,6 +2,7 @@ use std::vec;
 
 use super::poker_network::PokerNetwork;
 use super::trainer_config::TrainerConfig;
+use super::adam_optimizer::AdamWCustom;
 use crate::agent::agent_network::AgentNetwork;
 use crate::agent::agent_pool::AgentPool;
 use crate::agent::Agent;
@@ -46,9 +47,6 @@ impl<'a> Trainer<'a> {
         let gae_lambda = 0.95;
         let reward_gamma = 0.999;
         let log_epsilon = 1e-10;
-        let entropy_beta = 0.01;
-        let epsilon_greedy = 0.05; // 5% of random actions at start
-        let epsilon_greedy_decay: f32 = 0.9999;
 
         let mut trained_network = PokerNetwork::new(
             self.player_cnt,
@@ -66,25 +64,34 @@ impl<'a> Trainer<'a> {
         self.refresh_agents(&mut agent_pool)?;
 
         // Build optimizers
-        let mut optimizer_embedding = candle_nn::AdamW::new_lr(
+        let mut optimizer_embedding = AdamWCustom::new_lr(
             helper::filter_var_map_by_prefix(&trained_network.var_map, &["siamese"]),
             self.trainer_config.learning_rate,
         )?;
-        let mut optimizer_policy = candle_nn::AdamW::new_lr(
+        optimizer_embedding.set_step(latest_iteration as usize * self.trainer_config.update_step);
+
+        // optimizer_embedding.step(grads)?;
+        let mut optimizer_policy = AdamWCustom::new_lr(
             helper::filter_var_map_by_prefix(&trained_network.var_map, &["actor"]),
-            self.trainer_config.learning_rate,
+            self.trainer_config.learning_rate / 5.0,
         )?;
-        let mut optimizer_critic = candle_nn::AdamW::new_lr(
+        optimizer_policy.set_step(latest_iteration as usize * self.trainer_config.update_step);
+
+        let mut optimizer_critic = AdamWCustom::new_lr(
             helper::filter_var_map_by_prefix(&trained_network.var_map, &["critic"]),
             self.trainer_config.learning_rate,
         )?;
+        optimizer_critic.set_step(latest_iteration as usize * self.trainer_config.update_step);
 
         // Main training loop
         for iteration in (latest_iteration as usize + 1)..self.trainer_config.max_iters {
             println!("Iteration: {}", iteration);
 
             // Rollout hands and build hand states
-            let mut hand_states = self.build_hand_states(&trained_network, &agent_pool, epsilon_greedy * epsilon_greedy_decay.powi(iteration as i32))?;
+            let mut hand_states = self.build_hand_states(
+                &trained_network, 
+                &agent_pool, 
+                self.trainer_config.epsilon_greedy_factor * self.trainer_config.epsilon_greedy_decay.powi(iteration as i32))?;
 
             // Calculate cumulative rewards for each hand state
             let mut rewards_by_hand_state = Vec::new();
@@ -119,6 +126,8 @@ impl<'a> Trainer<'a> {
                     step_cnt += hand_rewards.len();
                     rewards_by_hand_state.push(hand_rewards);
                 }
+
+                println!("Batch size: {}", step_cnt);
 
                 min_rewards_tensor = Tensor::new(min_rewards, &self.device)?;
                 max_rewards_tensor = Tensor::new(max_rewards, &self.device)?;
@@ -213,25 +222,27 @@ impl<'a> Trainer<'a> {
                 );
 
                 println!(
-                    "Policy loss before entropy: {:?}",
+                    "Policy loss: {:?}",
                     policy_loss.as_ref().unwrap().to_scalar::<f32>()
                 );
 
                 // Calculate entropy regularization, to encourage exploration
-                let entropy = (actor_outputs.detach() * (actor_outputs.detach() + log_epsilon)?.log()?)?.sum(1)?.mean(0)?;
+                if self.trainer_config.use_entropy {
+                    let entropy = (actor_outputs.detach() * (actor_outputs.detach() + log_epsilon)?.log()?)?.sum(1)?.mean(0)?;
 
-                println!(
-                    "Entropy loss: {:?}",
-                    entropy.as_ref().to_scalar::<f32>()
-                );
+                    println!(
+                        "Entropy loss: {:?}",
+                        entropy.as_ref().to_scalar::<f32>()
+                    );
 
-                // Add entropy to loss
-                policy_loss = policy_loss - (entropy * entropy_beta)?;
+                    // Add entropy to loss
+                    policy_loss = policy_loss - (entropy * self.trainer_config.entropy_beta)?;
 
-                println!(
-                    "Final policy loss: {:?}",
-                    policy_loss.as_ref().unwrap().to_scalar::<f32>()
-                );
+                    println!(
+                        "Final policy loss: {:?}",
+                        policy_loss.as_ref().unwrap().to_scalar::<f32>()
+                    );
+                }
 
                 let gradients_policy = policy_loss?.backward()?;
 
@@ -313,14 +324,14 @@ impl<'a> Trainer<'a> {
             //     )?;
             // }
 
-            if iteration > 0 && iteration % self.trainer_config.save_interval as usize == 0 {
+            if iteration > 0 && (iteration % self.trainer_config.save_interval as usize == 0 || iteration == 25) {
                 trained_network.var_map.save(
                     Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration)),
                 )?;
             }
 
             // Put a new agent in the pool every 100 iterations
-            if iteration % self.trainer_config.new_agent_interval as usize == 0 {
+            if iteration % self.trainer_config.new_agent_interval as usize == 0 || iteration == 25 {
                 self.refresh_agents(&mut agent_pool)?;
             }
         }
@@ -336,7 +347,7 @@ impl<'a> Trainer<'a> {
     ) -> Result<Vec<HandState>, Box<dyn std::error::Error>> {
         let hand_states_base = Arc::new(Mutex::new(Vec::new()));
 
-        let n_workers = 2;
+        let n_workers = 4;
         let thread_pool = ThreadPool::new(n_workers);
 
         // Clone trained network for inference
@@ -349,6 +360,7 @@ impl<'a> Trainer<'a> {
             let device = self.device.clone();
             let no_invalid_for_traverser = self.trainer_config.no_invalid_for_traverser;
             let iterations = self.trainer_config.hands_per_player_per_iteration /n_workers;
+            let use_epsilon_greedy = self.trainer_config.use_epsilon_greedy;
 
             thread_pool.execute(move || {
                 let mut new_hand_states = Vec::new();
@@ -363,7 +375,7 @@ impl<'a> Trainer<'a> {
                         let agent = if p != traverser {
                             agent_pool_clone.get_agent().1
                         } else {
-                            &trained_agent
+                            &*trained_agent
                         };
                         agents.push(agent);
                     }
@@ -375,7 +387,7 @@ impl<'a> Trainer<'a> {
                             &agents,
                             &device,
                             no_invalid_for_traverser,
-                            epsilon_greedy
+                            if use_epsilon_greedy {epsilon_greedy} else {0.0}
                         )
                         .is_err()
                     {
@@ -610,7 +622,7 @@ impl<'a> Trainer<'a> {
                 let split = file_name[2].split('.').collect::<Vec<&str>>();
                 if (split.len() == 2) && (split[1] == "pt") {
                     let iteration = split[0].parse::<u32>()?;
-                    if iteration % 100 == 0 {
+                    if iteration == 25 || iteration % 100 == 0 {
                         model_files.push(trained_network_path.join(format!("poker_network_{}.pt", iteration)).to_str().unwrap().to_owned());
                     }
                 }

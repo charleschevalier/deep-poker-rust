@@ -46,7 +46,7 @@ impl<'a> Tree<'a> {
     pub fn traverse(
         &mut self,
         traverser: u32,
-        agents: &Vec<&Box<dyn Agent>>,
+        agents: &Vec<&dyn Agent>,
         device: &candle_core::Device,
         no_invalid_for_traverser: bool,
         epsilon_greedy: f32,
@@ -73,7 +73,7 @@ impl<'a> Tree<'a> {
     fn traverse_state(
         state_option: &mut Option<Box<dyn State<'a> + 'a>>,
         hand_state: &mut HandState,
-        agents: &Vec<&Box<dyn Agent>>,
+        agents: &Vec<&dyn Agent>,
         action_config: &ActionConfig,
         device: &candle_core::Device,
         no_invalid_for_traverser: bool,
@@ -145,22 +145,20 @@ impl<'a> Tree<'a> {
             let mut rng = rand::thread_rng();
             let random_float_0_1: f32 = rng.gen();
 
-            let action_index = if random_float_0_1 >= epsilon_greedy {
+            let action_index = if random_float_0_1 >= epsilon_greedy || epsilon_greedy == 0.0 {
                 // Regular traversal, we choose an action from the network
-                agents[state.get_player_to_move() as usize]
-                    .as_ref()
-                    .choose_action(
-                        hand_state,
-                        &valid_actions_mask,
-                        state.get_state_data().street,
-                        action_config,
-                        device,
-                        if state.get_player_to_move() == traverser as i32 {
-                            no_invalid_for_traverser
-                        } else {
-                            true
-                        },
-                    )?
+                agents[state.get_player_to_move() as usize].choose_action(
+                    hand_state,
+                    &valid_actions_mask,
+                    state.get_state_data().street,
+                    action_config,
+                    device,
+                    if state.get_player_to_move() == traverser as i32 {
+                        no_invalid_for_traverser
+                    } else {
+                        true
+                    },
+                )?
             } else {
                 // Epsilon greedy, we choose a random action to favor exploration
                 let mut index: usize = rng.gen_range(0..valid_actions_mask.len());

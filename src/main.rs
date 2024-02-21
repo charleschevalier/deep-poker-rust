@@ -20,13 +20,18 @@ fn main() {
         learning_rate: 1e-5,
         max_iters: 500000,
         hands_per_player_per_iteration: 512,
-        update_step: 32,
+        update_step: 10,
         ppo_epsilon: 0.2,
         ppo_delta_1: 3.0,
         no_invalid_for_traverser: true,
         new_agent_interval: 100,
         save_interval: 100,
         agent_count: 20,
+        use_epsilon_greedy: false,
+        epsilon_greedy_factor: 0.05, // 5% of random actions at start
+        epsilon_greedy_decay: 0.9999,
+        use_entropy: false,
+        entropy_beta: 0.01,
     };
 
     let device = Device::cuda_if_available(0).unwrap();

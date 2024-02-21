@@ -39,12 +39,20 @@ impl AgentPool {
         self.agents.push(agent);
     }
 
-    pub fn get_agent(&self) -> (i32, &Box<dyn Agent>) {
+    pub fn get_agent(&self) -> (i32, &dyn Agent) {
         if self.agents.is_empty() {
-            return (-1, &self.agent_random);
+            return (-1, &*self.agent_random);
         }
 
         let mut rng = rand::thread_rng();
+
+        // Return random agent 25% of the time when we have less than 3 agents
+        if self.agents.len() < 3 {
+            let random_float_0_1: f32 = rng.gen();
+            if random_float_0_1 <= 0.25 {
+                return (-1, &*self.agent_random);
+            }
+        }
 
         // Get random index in the last agent_count networks in self.agents
         let rand_index = if self.agents.len() >= self.agent_count as usize {
@@ -53,7 +61,7 @@ impl AgentPool {
             rng.gen_range(0..self.agents.len())
         };
 
-        (rand_index as i32, &self.agents[rand_index])
+        (rand_index as i32, &*self.agents[rand_index])
     }
 
     pub fn play_tournament(

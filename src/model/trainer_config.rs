@@ -9,4 +9,9 @@ pub struct TrainerConfig {
     pub new_agent_interval: u32,
     pub save_interval: u32,
     pub agent_count: u32,
+    pub use_epsilon_greedy: bool,
+    pub epsilon_greedy_factor: f32,
+    pub epsilon_greedy_decay: f32,
+    pub use_entropy: bool,
+    pub entropy_beta: f64,
 }

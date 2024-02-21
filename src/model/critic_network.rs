@@ -8,7 +8,7 @@ pub struct CriticNetwork {
 
 impl CriticNetwork {
     pub fn new(vb: &VarBuilder) -> Result<CriticNetwork, candle_core::Error> {
-        let weight_dims: Vec<Vec<usize>> = vec![vec![1024, 1024], vec![1, 1024]];
+        let weight_dims: Vec<Vec<usize>> = vec![vec![512, 512], vec![1, 512]];
 
         Ok(CriticNetwork {
             linear_1: linear(
