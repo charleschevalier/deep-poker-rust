@@ -347,7 +347,7 @@ impl<'a> Trainer<'a> {
     ) -> Result<Vec<HandState>, Box<dyn std::error::Error>> {
         let hand_states_base = Arc::new(Mutex::new(Vec::new()));
 
-        let n_workers = 4;
+        let n_workers = num_cpus::get() - 1;
         let thread_pool = ThreadPool::new(n_workers);
 
         // Clone trained network for inference
@@ -357,7 +357,6 @@ impl<'a> Trainer<'a> {
             let agent_pool_clone = agent_pool.clone();
             let player_cnt = self.player_cnt;
             let action_config = self.action_config.clone();
-            let device = self.device.clone();
             let no_invalid_for_traverser = self.trainer_config.no_invalid_for_traverser;
             let iterations = self.trainer_config.hands_per_player_per_iteration /n_workers;
             let use_epsilon_greedy = self.trainer_config.use_epsilon_greedy;
@@ -385,7 +384,7 @@ impl<'a> Trainer<'a> {
                         .traverse(
                             traverser,
                             &agents,
-                            &device,
+                            &Device::Cpu,
                             no_invalid_for_traverser,
                             if use_epsilon_greedy {epsilon_greedy} else {0.0}
                         )
@@ -592,7 +591,7 @@ impl<'a> Trainer<'a> {
                     let mut network = PokerNetwork::new(
                         self.player_cnt,
                         self.action_config.clone(),
-                        self.device.clone(),
+                        candle_core::Device::Cpu,
                         false,
                     )?;
                     network

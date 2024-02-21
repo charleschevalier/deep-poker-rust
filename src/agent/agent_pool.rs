@@ -140,8 +140,12 @@ impl AgentPool {
             // First, load agents
             let mut pool_agents: Vec<Box<dyn Agent>> = Vec::new();
             for agent_index in pool {
-                let mut network =
-                    PokerNetwork::new(player_count, action_config.clone(), device.clone(), false)?;
+                let mut network = PokerNetwork::new(
+                    player_count,
+                    action_config.clone(),
+                    candle_core::Device::Cpu,
+                    false,
+                )?;
                 network
                     .var_map
                     .load(model_files[*agent_index].as_str())
@@ -249,8 +253,12 @@ impl AgentPool {
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.agents.clear();
         for agent_file in agent_files.iter() {
-            let mut network =
-                PokerNetwork::new(player_count, action_config.clone(), device.clone(), false)?;
+            let mut network = PokerNetwork::new(
+                player_count,
+                action_config.clone(),
+                candle_core::Device::Cpu,
+                false,
+            )?;
             network.var_map.load(agent_file.as_str())?;
             self.add_agent(Box::new(AgentNetwork::new(network)));
         }

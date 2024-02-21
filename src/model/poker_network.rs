@@ -93,12 +93,12 @@ impl PokerNetwork {
 }
 
 impl Clone for PokerNetwork {
-    // The clone is not trainable
+    // The clone is not trainable and on CPU by default
     fn clone(&self) -> PokerNetwork {
         let mut copy_net = Self::new(
             self.player_cnt,
             self.action_config.clone(),
-            self.device.clone(),
+            Device::Cpu,
             false,
         )
         .unwrap();
@@ -108,7 +108,7 @@ impl Clone for PokerNetwork {
         var_map.iter().for_each(|(k, v)| {
             copy_net
                 .var_map
-                .set_one(k, v.as_tensor().copy().unwrap())
+                .set_one(k, v.as_tensor().to_device(&Device::Cpu).unwrap())
                 .unwrap();
         });
 
