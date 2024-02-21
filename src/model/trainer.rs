@@ -52,6 +52,7 @@ impl<'a> Trainer<'a> {
             self.player_cnt,
             self.action_config.clone(),
             self.device.clone(),
+            self.trainer_config.agents_device.clone(),
             true,
         )?;
 
@@ -360,6 +361,7 @@ impl<'a> Trainer<'a> {
             let no_invalid_for_traverser = self.trainer_config.no_invalid_for_traverser;
             let iterations = self.trainer_config.hands_per_player_per_iteration /n_workers;
             let use_epsilon_greedy = self.trainer_config.use_epsilon_greedy;
+            let agent_device = self.trainer_config.agents_device.clone();
 
             thread_pool.execute(move || {
                 let mut new_hand_states = Vec::new();
@@ -384,7 +386,7 @@ impl<'a> Trainer<'a> {
                         .traverse(
                             traverser,
                             &agents,
-                            &Device::Cpu,
+                            &agent_device,
                             no_invalid_for_traverser,
                             if use_epsilon_greedy {epsilon_greedy} else {0.0}
                         )
@@ -591,7 +593,8 @@ impl<'a> Trainer<'a> {
                     let mut network = PokerNetwork::new(
                         self.player_cnt,
                         self.action_config.clone(),
-                        candle_core::Device::Cpu,
+                        self.trainer_config.agents_device.clone(),
+                        self.trainer_config.agents_device.clone(),
                         false,
                     )?;
                     network
@@ -628,6 +631,6 @@ impl<'a> Trainer<'a> {
             }
         }
 
-        agent_pool.play_tournament(self.player_cnt, self.action_config, &model_files, &self.device)
+        agent_pool.play_tournament(self.player_cnt, self.action_config, &model_files, &self.trainer_config.agents_device)
     }
 }

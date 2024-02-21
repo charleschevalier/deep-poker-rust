@@ -1,3 +1,5 @@
+use candle_core::Device;
+
 pub struct TrainerConfig {
     pub learning_rate: f64,
     pub max_iters: usize,
@@ -14,4 +16,5 @@ pub struct TrainerConfig {
     pub epsilon_greedy_decay: f32,
     pub use_entropy: bool,
     pub entropy_beta: f64,
+    pub agents_device: Device,
 }

@@ -13,7 +13,7 @@ pub struct PokerNetwork {
 
     player_cnt: u32,
     action_config: ActionConfig,
-    device: Device,
+    clone_device: Device,
     train: bool,
 }
 
@@ -22,6 +22,7 @@ impl PokerNetwork {
         player_count: u32,
         action_config: ActionConfig,
         device: Device,
+        clone_device: Device,
         train: bool,
     ) -> Result<PokerNetwork, Box<dyn std::error::Error>> {
         let var_map = VarMap::new();
@@ -46,7 +47,7 @@ impl PokerNetwork {
             var_map,
             player_cnt: player_count,
             action_config,
-            device,
+            clone_device,
             train,
         })
     }
@@ -98,7 +99,8 @@ impl Clone for PokerNetwork {
         let mut copy_net = Self::new(
             self.player_cnt,
             self.action_config.clone(),
-            Device::Cpu,
+            self.clone_device.clone(),
+            self.clone_device.clone(),
             false,
         )
         .unwrap();
@@ -108,7 +110,10 @@ impl Clone for PokerNetwork {
         var_map.iter().for_each(|(k, v)| {
             copy_net
                 .var_map
-                .set_one(k, v.as_tensor().to_device(&Device::Cpu).unwrap())
+                .set_one(
+                    k,
+                    v.as_tensor().to_device(&self.clone_device.clone()).unwrap(),
+                )
                 .unwrap();
         });
 

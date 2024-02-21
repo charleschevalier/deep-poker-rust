@@ -32,6 +32,7 @@ fn main() {
         epsilon_greedy_decay: 0.9999,
         use_entropy: false,
         entropy_beta: 0.01,
+        agents_device: Device::Cpu,
     };
 
     let device = Device::cuda_if_available(0).unwrap();

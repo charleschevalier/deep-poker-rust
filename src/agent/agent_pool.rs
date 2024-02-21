@@ -143,7 +143,8 @@ impl AgentPool {
                 let mut network = PokerNetwork::new(
                     player_count,
                     action_config.clone(),
-                    candle_core::Device::Cpu,
+                    device.clone(),
+                    device.clone(),
                     false,
                 )?;
                 network
@@ -256,7 +257,8 @@ impl AgentPool {
             let mut network = PokerNetwork::new(
                 player_count,
                 action_config.clone(),
-                candle_core::Device::Cpu,
+                device.clone(),
+                device.clone(),
                 false,
             )?;
             network.var_map.load(agent_file.as_str())?;
