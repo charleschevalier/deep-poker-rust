@@ -1,16 +1,17 @@
+use std::collections::HashMap;
+
 use super::actor_network::ActorNetwork;
 use super::critic_network::CriticNetwork;
 use super::siamese_network::SiameseNetwork;
-use crate::game::action::ActionConfig;
-use candle_core::{DType, Device, Tensor};
-use candle_nn::{VarBuilder, VarMap};
+use crate::{game::action::ActionConfig, helper};
+use candle_core::{DType, Device, Tensor, Var};
+use candle_nn::{batch_norm, VarBuilder, VarMap};
 
 pub struct PokerNetwork {
     siamese_network: SiameseNetwork,
     actor_network: ActorNetwork,
     critic_network: CriticNetwork,
-    pub var_map: VarMap,
-
+    var_map: VarMap,
     player_cnt: u32,
     action_config: ActionConfig,
     clone_device: Device,
@@ -33,12 +34,13 @@ impl PokerNetwork {
             player_count,
             3 + action_config.postflop_raise_sizes.len() as u32, // Each raise size + fold, call, check
             player_count as usize * 3, // 3 actions max per player per street => TODO: prevent situations where we have more than 3 actions
-            &vb,
+            vb.pp("siamese"),
         )?;
 
-        let actor_network = ActorNetwork::new(&vb, 3 + action_config.postflop_raise_sizes.len())?;
+        let actor_network =
+            ActorNetwork::new(vb.pp("actor"), 3 + action_config.postflop_raise_sizes.len())?;
 
-        let critic_network = CriticNetwork::new(&vb)?;
+        let critic_network = CriticNetwork::new(vb.pp("critic"))?;
 
         Ok(PokerNetwork {
             siamese_network,
@@ -88,33 +90,153 @@ impl PokerNetwork {
         }
     }
 
-    // pub fn _print_weights(&self) {
-    //     self.siamese_network._print_weights();
-    // }
+    pub fn get_var_map(&self) -> &VarMap {
+        &self.var_map
+    }
+
+    pub fn load_var_map<P: AsRef<std::path::Path>>(
+        &mut self,
+        file_path: P,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.var_map.load(file_path)?;
+
+        let mut siamese_tensors = HashMap::new();
+        for (k, v) in self.var_map.data().lock().unwrap().iter() {
+            if let Some(stripped) = k.strip_prefix("siamese.") {
+                siamese_tensors.insert(stripped.to_string(), v.as_tensor().copy()?);
+            }
+        }
+        self.siamese_network.set_batch_norm_tensors(siamese_tensors);
+
+        Ok(())
+    }
+
+    pub fn save_var_map<P: AsRef<std::path::Path>>(
+        &self,
+        file_path: P,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let batch_norm_tensors = self.get_batch_norm_tensors();
+
+        for (k, v) in self.var_map.data().lock().unwrap().iter() {
+            if batch_norm_tensors.contains_key(k) {
+                let tensor = batch_norm_tensors.get(k).unwrap();
+                let vt = v.as_tensor().clone();
+                let diff = vt
+                    .sub(tensor)
+                    .unwrap()
+                    .abs()?
+                    .sum_all()?
+                    .to_scalar::<f32>()?;
+
+                if diff > 1e-6 {
+                    v.set(batch_norm_tensors.get(k).unwrap())?;
+                }
+            }
+        }
+
+        self.var_map.save(file_path)?;
+
+        Ok(())
+    }
+
+    pub fn get_siamese_vars(&self) -> Vec<Var> {
+        helper::filter_var_map_by_prefix(&self.var_map, &["siamese"])
+    }
+
+    pub fn get_actor_vars(&self) -> Vec<Var> {
+        helper::filter_var_map_by_prefix(&self.var_map, &["actor"])
+    }
+
+    pub fn get_critic_vars(&self) -> Vec<Var> {
+        helper::filter_var_map_by_prefix(&self.var_map, &["critic"])
+    }
+
+    pub fn get_batch_norm_tensors(&self) -> HashMap<String, Tensor> {
+        let mut result = HashMap::new();
+        let tensors = self.siamese_network.get_batch_norm_tensors();
+        for (k, v) in tensors {
+            result.insert(format!("siamese.{}", k), v);
+        }
+        result
+    }
 }
 
 impl Clone for PokerNetwork {
     // The clone is not trainable and on CPU by default
     fn clone(&self) -> PokerNetwork {
-        let mut copy_net = Self::new(
+        let copy_net = Self::new(
             self.player_cnt,
             self.action_config.clone(),
             self.clone_device.clone(),
             self.clone_device.clone(),
-            false,
+            true,
         )
         .unwrap();
 
         let var_map = self.var_map.data().lock().unwrap();
-        // We perform a deep copy of the varmap using Tensor::copy on Var
+        let vm = copy_net.var_map.clone();
+        let mut new_var_map = vm.data().lock().unwrap();
+
+        // We perform a deep copy of the varmap
         var_map.iter().for_each(|(k, v)| {
-            copy_net
-                .var_map
-                .set_one(
-                    k,
-                    v.as_tensor().to_device(&self.clone_device.clone()).unwrap(),
-                )
-                .unwrap();
+            // println!("Copying: {}", k);
+            let new_tensor = candle_core::Var::from_tensor(
+                &v.copy().unwrap().to_device(&self.clone_device).unwrap(),
+            )
+            .unwrap();
+            let mut found = false;
+            for (name, var) in new_var_map.iter_mut() {
+                if name == k {
+                    var.set(&new_tensor).unwrap();
+                    found = true;
+
+                    // let is_equal = var
+                    //     .as_tensor()
+                    //     .to_dtype(DType::F32)
+                    //     .unwrap()
+                    //     .eq(&new_tensor.as_tensor().to_dtype(DType::F32).unwrap())
+                    //     .unwrap();
+                    // let is_equal_base = var
+                    //     .as_tensor()
+                    //     .to_dtype(DType::F32)
+                    //     .unwrap()
+                    //     .eq(&var.as_tensor().to_dtype(DType::F32).unwrap())
+                    //     .unwrap();
+
+                    let v1 = var
+                        .as_tensor()
+                        .to_dtype(DType::F32)
+                        .unwrap()
+                        .flatten_all()
+                        .unwrap()
+                        .to_vec1::<f32>()
+                        .unwrap();
+                    let v2 = new_tensor
+                        .as_tensor()
+                        .to_dtype(DType::F32)
+                        .unwrap()
+                        .flatten_all()
+                        .unwrap()
+                        .to_vec1::<f32>()
+                        .unwrap();
+
+                    if v1 != v2 {
+                        panic!();
+                    }
+                }
+            }
+
+            if !found {
+                panic!();
+            }
+
+            // copy_net
+            //     .var_map
+            //     .data()
+            //     .lock()
+            //     .unwrap()
+            //     .insert(k.clone(), new_tensor)
+            //     .unwrap();
         });
 
         copy_net

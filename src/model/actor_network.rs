@@ -8,22 +8,14 @@ pub struct ActorNetwork {
 
 impl ActorNetwork {
     pub fn new(
-        vb: &VarBuilder,
+        vb: VarBuilder,
         action_count: usize,
     ) -> Result<ActorNetwork, Box<dyn std::error::Error>> {
         let weight_dims: Vec<Vec<usize>> = vec![vec![512, 512], vec![action_count, 512]];
 
         Ok(ActorNetwork {
-            linear_1: linear(
-                weight_dims[0][1],
-                weight_dims[0][0],
-                vb.pp("actor_linear_1"),
-            )?,
-            linear_2: linear(
-                weight_dims[1][1],
-                weight_dims[1][0],
-                vb.pp("actor_linear_2"),
-            )?,
+            linear_1: linear(weight_dims[0][1], weight_dims[0][0], vb.pp("linear_1"))?,
+            linear_2: linear(weight_dims[1][1], weight_dims[1][0], vb.pp("linear_2"))?,
         })
     }
 

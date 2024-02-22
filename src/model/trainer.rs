@@ -9,8 +9,10 @@ use crate::game::hand_state::HandState;
 use crate::game::tree::Tree;
 use crate::helper;
 
+use candle_core::cuda_backend::cudarc::cublas::result;
 use candle_core::{Device, Tensor};
 use candle_nn::Optimizer;
+use itertools::cloned;
 use std::vec;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -73,20 +75,20 @@ impl<'a> Trainer<'a> {
 
         // Build optimizers
         let mut optimizer_embedding = AdamWCustom::new_lr(
-            helper::filter_var_map_by_prefix(&trained_network.var_map, &["siamese"]),
+            trained_network.get_siamese_vars(),
             self.trainer_config.learning_rate,
         )?;
         optimizer_embedding.set_step(latest_iteration as usize * self.trainer_config.update_step);
 
         // optimizer_embedding.step(grads)?;
         let mut optimizer_policy = AdamWCustom::new_lr(
-            helper::filter_var_map_by_prefix(&trained_network.var_map, &["actor"]),
+           trained_network.get_actor_vars(),
             self.trainer_config.learning_rate / 5.0,
         )?;
         optimizer_policy.set_step(latest_iteration as usize * self.trainer_config.update_step);
 
         let mut optimizer_critic = AdamWCustom::new_lr(
-            helper::filter_var_map_by_prefix(&trained_network.var_map, &["critic"]),
+            trained_network.get_critic_vars(),
             self.trainer_config.learning_rate,
         )?;
         optimizer_critic.set_step(latest_iteration as usize * self.trainer_config.update_step);
@@ -277,7 +279,7 @@ impl<'a> Trainer<'a> {
                 let mut gradients_embedding =
                     Tensor::zeros((), candle_core::DType::F32, &self.device)?.backward()?;
                 trained_network
-                .var_map
+                .get_var_map()
                     .data()
                     .lock()
                     .unwrap()
@@ -317,9 +319,24 @@ impl<'a> Trainer<'a> {
                 optimizer_embedding.step(&gradients_embedding)?;
             }
 
+            self.test_clone(&trained_network, iteration as u32)?;
+
+            let file_name = Path::new(&self.output_path).join(format!("poker_network_{}.pt", iteration));
+            trained_network.save_var_map(
+                file_name.clone(),
+            )?;
+            let mut cloned_network = PokerNetwork::new(
+                self.player_cnt,
+                self.action_config.clone(),
+                self.device.clone(),
+                self.trainer_config.agents_device.clone(),
+                false,
+            )?;
+            cloned_network.load_var_map(file_name)?;
+
             Tree::print_first_actions(
-                &trained_network,
-                &self.trainer_config.agents_device,
+                &cloned_network,
+                &self.device.clone(),
                 self.trainer_config.no_invalid_for_traverser,
                 self.action_config
             )?;
@@ -332,11 +349,11 @@ impl<'a> Trainer<'a> {
             //     )?;
             // }
 
-            if iteration > 0 && (iteration % self.trainer_config.save_interval as usize == 0 || iteration == 25) {
-                trained_network.var_map.save(
-                    Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration)),
-                )?;
-            }
+            // if iteration > 0 && (iteration % self.trainer_config.save_interval as usize == 0 || iteration == 25) {
+                // trained_network.var_map.save(
+                //     Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration)),
+                // )?;
+            // }
 
             // Put a new agent in the pool every 100 iterations
             if iteration % self.trainer_config.new_agent_interval as usize == 0 || iteration == 25 {
@@ -587,7 +604,7 @@ impl<'a> Trainer<'a> {
         }
 
         if latest_iteration > 0 {
-            trained_network.var_map.load(
+            trained_network.load_var_map(
                 trained_network_path.join(format!("poker_network_{}.pt", latest_iteration)),
             )?;
 
@@ -609,8 +626,7 @@ impl<'a> Trainer<'a> {
                         false,
                     )?;
                     network
-                        .var_map
-                        .load(trained_network_path.join(format!("poker_network_{}.pt", i)))?;
+                        .load_var_map(trained_network_path.join(format!("poker_network_{}.pt", i)))?;
                     agent_pool.add_agent(Box::new(AgentNetwork::new(network)));
                 }
             }
@@ -644,4 +660,159 @@ impl<'a> Trainer<'a> {
 
         agent_pool.play_tournament(self.player_cnt, self.action_config, &model_files, &self.trainer_config.agents_device)
     }
+
+    fn test_clone(&self, trained_network: &PokerNetwork, iteration: u32) -> Result<(), Box<dyn std::error::Error>> {
+        let file_name = Path::new(&self.output_path).join(format!("poker_network_{}.pt", iteration));
+        trained_network.save_var_map(
+            file_name.clone(),
+        )?;
+
+        // {
+        //     let content = trained_network.var_map.data().lock().unwrap();
+        //     let mut tensors = std::collections::HashMap::new();
+        //     for (tensor_name, var) in content.iter() {
+        //         tensors.insert(tensor_name.to_string(), var.as_tensor().clone());
+        //     }
+        //     candle_core::safetensors::save(&tensors, file_name.clone())?;
+        // }
+
+        // let loaded_tensors = candle_core::safetensors::load(file_name.clone(), &Device::Cpu)?;
+        // let tenors = trained_network.get
+        let real_batch_norm_tensors = trained_network.get_batch_norm_tensors();
+
+        let mut cloned_network = PokerNetwork::new(
+            self.player_cnt,
+            self.action_config.clone(),
+            Device::Cpu,
+            self.trainer_config.agents_device.clone(),
+            false,
+        )?;
+
+        cloned_network.load_var_map(file_name.clone())?;
+        let clone_batch_norm_tensors = trained_network.get_batch_norm_tensors();
+
+        println!("-------------------");
+        println!("Comparing VarMaps");
+        cloned_network.get_var_map().data().lock().unwrap().iter().for_each(|(k, v)| {
+            // trained_network.var_map.data().lock().unwrap().iter().for_each(|(kt, vt)| {
+            //     if kt == k {
+            //         let diff = (v.as_tensor() - vt.to_device(&Device::Cpu).unwrap()).unwrap().abs().unwrap().sum_all().unwrap().to_scalar::<f32>().unwrap();
+            //         println!("Diff: {:?} for key: {:?}", diff, k);
+            //     }
+            // });
+
+            let flat = v.as_tensor().flatten_all().unwrap().to_vec1::<f32>().unwrap();
+            //println!("CLONED {}: {:?}", k, flat);
+
+            if real_batch_norm_tensors.contains_key(k) {
+                let real = real_batch_norm_tensors.get(k).unwrap().flatten_all().unwrap().to_vec1::<f32>().unwrap();
+                //println!("REAL {}: {:?}", k, real);
+                if real != flat {
+                    println!("REAL Diff: {:?} for key: {:?}", k, k);
+                }
+            }
+
+            if clone_batch_norm_tensors.contains_key(k) {
+                let clone = clone_batch_norm_tensors.get(k).unwrap().flatten_all().unwrap().to_vec1::<f32>().unwrap();
+                //println!("CLONE {}: {:?}", k, clone);
+                if clone != flat {
+                    println!("CLONE Diff: {:?} for key: {:?}", k, k);
+                }
+            }
+
+            if trained_network.get_var_map().data().lock().unwrap().contains_key(k) {
+                let real = trained_network.get_var_map().data().lock().unwrap().get(k).unwrap().as_tensor().flatten_all().unwrap().to_vec1::<f32>().unwrap();
+                //println!("REAL {}: {:?}", k, real);
+                if real != flat {
+                    println!("TRAINED Diff: {:?} for key: {:?}", k, k);
+                }
+            }
+        });
+        println!("-------------------");
+
+        let mut cloned_gpu = PokerNetwork::new(
+            self.player_cnt,
+            self.action_config.clone(),
+            self.device.clone(),
+            self.trainer_config.agents_device.clone(),
+            false,
+        )?;
+        cloned_gpu.load_var_map(file_name.clone())?;
+
+        let rank1= 5;
+        let suit1= 0;
+        let rank2= 10;
+        let suit2= 2;
+
+        let mut card_vecs: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 4]; 6];
+
+        // Set hand cards
+        card_vecs[0][suit1][rank1] = 1.0;
+        card_vecs[0][suit2][rank2] = 1.0;
+        card_vecs[4][suit1][rank1] = 1.0;
+        card_vecs[4][suit2][rank2] = 1.0;
+
+        // Create action tensor
+        // Shape is (street_cnt * max_actions_per_street) x (player_count + 2 for sum and legal) x max_number_of_actions
+        let action_vecs: Vec<Vec<Vec<f32>>> =
+            vec![
+                vec![
+                    vec![0.0; 3 + self.action_config.postflop_raise_sizes.len()];
+                    self.action_config.player_count as usize + 2
+                ];
+                4 * self.action_config.max_actions_per_street as usize
+            ];
+
+        let card_tensor_gpu = Tensor::new(card_vecs.to_vec(), &self.device)?.unsqueeze(0)?;
+        let action_tensor_gpu = Tensor::new(action_vecs.to_vec(), &self.device)?.unsqueeze(0)?;
+
+        let card_tensor_cpu = Tensor::new(card_vecs.to_vec(), &Device::Cpu)?.unsqueeze(0)?;
+        let action_tensor_cpu = Tensor::new(action_vecs.to_vec(), &Device::Cpu)?.unsqueeze(0)?;
+
+        let embed_gpu = trained_network.forward_embedding(&card_tensor_gpu, &action_tensor_gpu, false)?;
+        let embed_gpu_clone = cloned_gpu.forward_embedding(&card_tensor_gpu, &action_tensor_gpu, false)?;
+        let embed_cpu = cloned_network.forward_embedding(&card_tensor_cpu, &action_tensor_cpu, false)?;
+        
+        // Compare varmaps
+        let varmapgpu = trained_network.get_var_map().data().lock().unwrap();
+        // let varmapgpu_clone = cloned_gpu.var_map.data().lock().unwrap();
+        let varmapcpu = cloned_network.get_var_map().data().lock().unwrap();
+
+        let mut has_diff = false;
+        for (k, v) in varmapgpu.iter() {
+            let vcpu = varmapcpu.get(k).unwrap();
+            let diff = (v.as_tensor().to_device(&Device::Cpu)? - vcpu.as_tensor())?.abs()?.sum_all()?.to_scalar::<f32>()?;
+            // println!("Diff: {:?} for key: {:?}", diff, k);
+            if diff > 1e-5 {
+                has_diff = true;
+            }
+        }
+
+        if has_diff {
+            panic!("Varmap diff");
+        }
+
+        let diff_gpu = (embed_gpu.clone() - embed_gpu_clone.clone())?.abs()?.sum_all()?.to_scalar::<f32>()?;
+        println!("Diff GPU: {:?}", diff_gpu);
+        let diff_cpu = (embed_gpu.to_device(&Device::Cpu)? - embed_cpu.clone())?.abs()?.sum_all()?.to_scalar::<f32>()?;
+        println!("Diff CPU: {:?}", diff_cpu);
+        let diff_new = (embed_gpu_clone.clone().to_device(&Device::Cpu)? - embed_cpu.clone())?.abs()?.sum_all()?.to_scalar::<f32>()?;
+        println!("Diff NEW: {:?}", diff_new);
+
+
+        // let result_gpu = trained_network.forward_actor(&embed.copy()?)?;
+        // let result_cpu = cloned_network.forward_actor(&embed.copy()?.to_device(&Device::Cpu)?)?;
+
+        // let card_tensor_cpu = Tensor::new(card_vecs, &self.device)?.unsqueeze(0)?;
+        // let action_tensor_cpu = Tensor::new(action_vecs, &self.device)?.unsqueeze(0)?;
+
+        // let result_cpu = cloned_network.forward_embedding(&card_tensor_cpu, &action_tensor_cpu, false)?;
+
+        // Check if the results are the same
+        // let diff = (result_gpu.to_device(&Device::Cpu)? - result_cpu)?.abs()?.sum_all()?.to_scalar::<f32>()?;
+        // println!("Diff: {:?}", diff);
+
+        Ok(())
+    }
+
 }

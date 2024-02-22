@@ -19,7 +19,7 @@ fn main() {
     let trainer_config = TrainerConfig {
         learning_rate: 1e-5,
         max_iters: 500000,
-        hands_per_player_per_iteration: 512,
+        hands_per_player_per_iteration: 256,
         update_step: 10,
         ppo_epsilon: 0.2,
         ppo_delta_1: 3.0,

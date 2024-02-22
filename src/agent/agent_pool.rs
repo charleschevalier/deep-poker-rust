@@ -148,8 +148,7 @@ impl AgentPool {
                     false,
                 )?;
                 network
-                    .var_map
-                    .load(model_files[*agent_index].as_str())
+                    .load_var_map(model_files[*agent_index].as_str())
                     .unwrap();
                 pool_agents.push(Box::new(AgentNetwork::new(network)));
             }
@@ -261,7 +260,7 @@ impl AgentPool {
                 device.clone(),
                 false,
             )?;
-            network.var_map.load(agent_file.as_str())?;
+            network.load_var_map(agent_file.as_str())?;
             self.add_agent(Box::new(AgentNetwork::new(network)));
         }
         Ok(())

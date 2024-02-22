@@ -7,20 +7,12 @@ pub struct CriticNetwork {
 }
 
 impl CriticNetwork {
-    pub fn new(vb: &VarBuilder) -> Result<CriticNetwork, candle_core::Error> {
+    pub fn new(vb: VarBuilder) -> Result<CriticNetwork, candle_core::Error> {
         let weight_dims: Vec<Vec<usize>> = vec![vec![512, 512], vec![1, 512]];
 
         Ok(CriticNetwork {
-            linear_1: linear(
-                weight_dims[0][1],
-                weight_dims[0][0],
-                vb.pp("critic_linear_1"),
-            )?,
-            linear_2: linear(
-                weight_dims[1][1],
-                weight_dims[1][0],
-                vb.pp("critic_linear_2"),
-            )?,
+            linear_1: linear(weight_dims[0][1], weight_dims[0][0], vb.pp("linear_1"))?,
+            linear_2: linear(weight_dims[1][1], weight_dims[1][0], vb.pp("linear_2"))?,
         })
     }
 
