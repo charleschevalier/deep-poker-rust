@@ -1,5 +1,8 @@
+use std::sync::{Arc, Mutex};
+
 use candle_core::Tensor;
 use rand::Rng;
+use threadpool::ThreadPool;
 
 use super::action::ActionConfig;
 use super::action_state::ActionState;
@@ -253,108 +256,142 @@ impl<'a> Tree<'a> {
     }
 
     pub fn print_first_actions(
-        network: &PokerNetwork,
-        device: &candle_core::Device,
-        no_invalid_for_traverser: bool,
-        action_config: &ActionConfig,
+        base_network: &PokerNetwork,
+        base_device: &candle_core::Device,
+        base_no_invalid_for_traverser: bool,
+        base_action_config: &ActionConfig,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let action_count = action_config.postflop_raise_sizes.len() + 3;
-        let mut result: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 13]; action_count];
-        let mut count: Vec<Vec<Vec<u32>>> = vec![vec![vec![0; 13]; 13]; action_count];
-        let mut valid_actions_mask: Vec<bool> = action_config
+        let n_workers = num_cpus::get();
+        let thread_pool = ThreadPool::new(n_workers);
+
+        let action_count = base_action_config.postflop_raise_sizes.len() + 3;
+        let base_result: Arc<Mutex<Vec<Vec<Vec<f32>>>>> =
+            Arc::new(Mutex::new(vec![vec![vec![0.0; 13]; 13]; action_count]));
+        let base_count: Arc<Mutex<Vec<Vec<Vec<u32>>>>> =
+            Arc::new(Mutex::new(vec![vec![vec![0; 13]; 13]; action_count]));
+        let mut base_valid_actions_mask: Vec<bool> = base_action_config
             .preflop_raise_sizes
             .iter()
             .map(|&x| x > 0.0)
             .collect();
 
-        valid_actions_mask.insert(0, true);
-        valid_actions_mask.insert(0, true);
-        valid_actions_mask.push(true);
+        base_valid_actions_mask.insert(0, true);
+        base_valid_actions_mask.insert(0, true);
+        base_valid_actions_mask.push(true);
 
         // Iterate through card combinations
-        for i in 0..52 {
-            for j in i + 1..52 {
-                let rank1: usize = i / 4;
-                let suit1: usize = i % 4;
-                let rank2: usize = j / 4;
-                let suit2: usize = j % 4;
+        for a in 0..13 {
+            let network = base_network.clone();
+            let device = base_device.clone();
+            let action_config = base_action_config.clone();
+            let no_invalid_for_traverser = base_no_invalid_for_traverser;
+            let valid_actions_mask = base_valid_actions_mask.to_vec();
+            let result = Arc::clone(&base_result);
+            let count = Arc::clone(&base_count);
+            //let a = a_i;
 
-                let mut card_vecs: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 4]; 6];
+            thread_pool.execute(move || {
+                for b in 0..4 {
+                    let i = a * 4 + b;
+                    for j in i + 1..52 {
+                        let rank1: usize = i / 4;
+                        let suit1: usize = i % 4;
+                        let rank2: usize = j / 4;
+                        let suit2: usize = j % 4;
 
-                // Set hand cards
-                card_vecs[0][suit1][rank1] = 1.0;
-                card_vecs[0][suit2][rank2] = 1.0;
-                card_vecs[4][suit1][rank1] = 1.0;
-                card_vecs[4][suit2][rank2] = 1.0;
+                        let mut card_vecs: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 4]; 6];
 
-                // Create action tensor
-                // Shape is (street_cnt * max_actions_per_street) x (player_count + 2 for sum and legal) x max_number_of_actions
-                let action_vecs: Vec<Vec<Vec<f32>>> =
-                    vec![
-                        vec![
-                            vec![0.0; 3 + action_config.postflop_raise_sizes.len()];
-                            action_config.player_count as usize + 2
-                        ];
-                        4 * action_config.max_actions_per_street as usize
-                    ];
+                        // Set hand cards
+                        card_vecs[0][suit1][rank1] = 1.0;
+                        card_vecs[0][suit2][rank2] = 1.0;
+                        card_vecs[4][suit1][rank1] = 1.0;
+                        card_vecs[4][suit2][rank2] = 1.0;
 
-                let card_tensor = Tensor::new(card_vecs, device)?.unsqueeze(0)?;
-                let action_tensor = Tensor::new(action_vecs, device)?.unsqueeze(0)?;
+                        // Create action tensor
+                        // Shape is (street_cnt * max_actions_per_street) x (player_count + 2 for sum and legal) x max_number_of_actions
+                        let action_vecs: Vec<Vec<Vec<f32>>> =
+                            vec![
+                                vec![
+                                    vec![0.0; 3 + action_config.postflop_raise_sizes.len()];
+                                    action_config.player_count as usize + 2
+                                ];
+                                4 * action_config.max_actions_per_street as usize
+                            ];
 
-                let proba_tensor = network
-                    .forward_embedding_actor(&card_tensor, &action_tensor, false)?
-                    .detach();
+                        let card_tensor = Tensor::new(card_vecs, &device)
+                            .unwrap()
+                            .unsqueeze(0)
+                            .unwrap();
+                        let action_tensor = Tensor::new(action_vecs, &device)
+                            .unwrap()
+                            .unsqueeze(0)
+                            .unwrap();
 
-                let is_suited = suit1 == suit2;
+                        let proba_tensor = network
+                            .forward_embedding_actor(&card_tensor, &action_tensor, false)
+                            .unwrap()
+                            .detach();
 
-                let min_rank = if rank1 < rank2 { rank1 } else { rank2 };
-                let max_rank = if rank1 > rank2 { rank1 } else { rank2 };
+                        let is_suited = suit1 == suit2;
 
-                let mut probas: Vec<f32> = proba_tensor.squeeze(0)?.to_vec1()?;
+                        let min_rank = if rank1 < rank2 { rank1 } else { rank2 };
+                        let max_rank = if rank1 > rank2 { rank1 } else { rank2 };
 
-                // Normalize probs
-                for i in 0..probas.len() {
-                    if no_invalid_for_traverser
-                        && (i >= valid_actions_mask.len() || !valid_actions_mask[i])
-                    {
-                        probas[i] = 0.0;
-                    }
-                }
+                        let mut probas: Vec<f32> =
+                            proba_tensor.squeeze(0).unwrap().to_vec1().unwrap();
 
-                // Normalize probas
-                let sum: f32 = probas.iter().sum();
-                if sum > 0.0 {
-                    for p in &mut probas {
-                        *p /= sum;
-                    }
-                } else {
-                    // Count positive values in valid_actions_mask
-                    let true_count = if no_invalid_for_traverser {
-                        valid_actions_mask.iter().filter(|&&x| x).count()
-                    } else {
-                        probas.len()
-                    };
-                    for (i, p) in probas.iter_mut().enumerate() {
-                        if i < valid_actions_mask.len() && valid_actions_mask[i] {
-                            *p = 1.0 / (true_count as f32);
+                        // Normalize probs
+                        for k in 0..probas.len() {
+                            if no_invalid_for_traverser
+                                && (k >= valid_actions_mask.len() || !valid_actions_mask[k])
+                            {
+                                probas[k] = 0.0;
+                            }
+                        }
+
+                        // Normalize probas
+                        let sum: f32 = probas.iter().sum();
+                        if sum > 0.0 {
+                            for p in &mut probas {
+                                *p /= sum;
+                            }
+                        } else {
+                            // Count positive values in valid_actions_mask
+                            let true_count = if no_invalid_for_traverser {
+                                valid_actions_mask.iter().filter(|&&x| x).count()
+                            } else {
+                                probas.len()
+                            };
+                            for (i, p) in probas.iter_mut().enumerate() {
+                                if i < valid_actions_mask.len() && valid_actions_mask[i] {
+                                    *p = 1.0 / (true_count as f32);
+                                }
+                            }
+                        }
+
+                        let mut res = result.lock().unwrap();
+                        let mut cnt = count.lock().unwrap();
+                        for action_index in 0..action_count {
+                            if is_suited {
+                                res[action_index][max_rank][min_rank] += probas[action_index];
+                                cnt[action_index][max_rank][min_rank] += 1;
+                            } else {
+                                res[action_index][min_rank][max_rank] += probas[action_index];
+                                cnt[action_index][min_rank][max_rank] += 1;
+                            }
                         }
                     }
                 }
-
-                for action_index in 0..action_count {
-                    if is_suited {
-                        result[action_index][max_rank][min_rank] += probas[action_index];
-                        count[action_index][max_rank][min_rank] += 1;
-                    } else {
-                        result[action_index][min_rank][max_rank] += probas[action_index];
-                        count[action_index][min_rank][max_rank] += 1;
-                    }
-                }
-            }
+            });
         }
 
+        thread_pool.join();
+
+        let res = base_result.lock().unwrap();
+        let cnt = base_count.lock().unwrap();
+
         for action_index in 0..action_count {
-            if no_invalid_for_traverser && !valid_actions_mask[action_index] {
+            if base_no_invalid_for_traverser && !base_valid_actions_mask[action_index] {
                 continue;
             }
             println!();
@@ -382,8 +419,8 @@ impl<'a> Tree<'a> {
                 );
 
                 for j in 0..13 {
-                    let value = if count[action_index][i][j] > 0 {
-                        result[action_index][i][j] / count[action_index][i][j] as f32
+                    let value = if cnt[action_index][i][j] > 0 {
+                        res[action_index][i][j] / cnt[action_index][i][j] as f32
                     } else {
                         0.0
                     };

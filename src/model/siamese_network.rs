@@ -1,11 +1,9 @@
 use std::collections::HashMap;
 
-use candle_core::Device;
 use candle_core::Module;
 use candle_core::Tensor;
 use candle_nn::conv2d_no_bias;
 use candle_nn::BatchNormConfig;
-use candle_nn::VarMap;
 use candle_nn::{batch_norm, linear, BatchNorm, Conv2d, Conv2dConfig, Linear, VarBuilder};
 
 #[derive(Clone)]
@@ -238,10 +236,10 @@ impl SiameseTwin {
         let mut tensors1 = HashMap::new();
         let mut tensors2 = HashMap::new();
         for (k, v) in tensors {
-            if k.starts_with("twin_1.") {
-                tensors1.insert(k[7..].to_string(), v);
-            } else if k.starts_with("twin_2.") {
-                tensors2.insert(k[7..].to_string(), v);
+            if let Some(stripped) = k.strip_prefix("twin_1.") {
+                tensors1.insert(stripped.to_string(), v);
+            } else if let Some(stripped) = k.strip_prefix("twin_2.") {
+                tensors2.insert(stripped.to_string(), v);
             }
         }
 
@@ -337,10 +335,10 @@ impl SiameseNetwork {
         let mut card_tensors = HashMap::new();
         let mut action_tensors = HashMap::new();
         for (k, v) in tensors {
-            if k.starts_with("card_twin.") {
-                card_tensors.insert(k[10..].to_string(), v);
-            } else if k.starts_with("action_twin.") {
-                action_tensors.insert(k[12..].to_string(), v);
+            if let Some(stripped) = k.strip_prefix("card_twin.") {
+                card_tensors.insert(stripped.to_string(), v);
+            } else if let Some(stripped) = k.strip_prefix("action_twin.") {
+                action_tensors.insert(stripped.to_string(), v);
             }
         }
 

@@ -5,7 +5,7 @@ use super::critic_network::CriticNetwork;
 use super::siamese_network::SiameseNetwork;
 use crate::{game::action::ActionConfig, helper};
 use candle_core::{DType, Device, Tensor, Var};
-use candle_nn::{batch_norm, VarBuilder, VarMap};
+use candle_nn::{VarBuilder, VarMap};
 
 pub struct PokerNetwork {
     siamese_network: SiameseNetwork,
@@ -99,15 +99,18 @@ impl PokerNetwork {
         file_path: P,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.var_map.load(file_path)?;
+        self.set_batch_norm_tensors(self.var_map.clone())?;
+        Ok(())
+    }
 
+    pub fn set_batch_norm_tensors(&mut self, var_map: VarMap) -> Result<(), candle_core::Error> {
         let mut siamese_tensors = HashMap::new();
-        for (k, v) in self.var_map.data().lock().unwrap().iter() {
+        for (k, v) in var_map.data().lock().unwrap().iter() {
             if let Some(stripped) = k.strip_prefix("siamese.") {
                 siamese_tensors.insert(stripped.to_string(), v.as_tensor().copy()?);
             }
         }
         self.siamese_network.set_batch_norm_tensors(siamese_tensors);
-
         Ok(())
     }
 
@@ -164,80 +167,33 @@ impl PokerNetwork {
 impl Clone for PokerNetwork {
     // The clone is not trainable and on CPU by default
     fn clone(&self) -> PokerNetwork {
-        let copy_net = Self::new(
+        let mut copy_net = Self::new(
             self.player_cnt,
             self.action_config.clone(),
             self.clone_device.clone(),
             self.clone_device.clone(),
-            true,
+            false,
         )
         .unwrap();
 
-        let var_map = self.var_map.data().lock().unwrap();
-        let vm = copy_net.var_map.clone();
-        let mut new_var_map = vm.data().lock().unwrap();
+        {
+            let var_map = self.var_map.data().lock().unwrap();
+            let new_var_map = copy_net.var_map.data().lock().unwrap();
 
-        // We perform a deep copy of the varmap
-        var_map.iter().for_each(|(k, v)| {
-            // println!("Copying: {}", k);
-            let new_tensor = candle_core::Var::from_tensor(
-                &v.copy().unwrap().to_device(&self.clone_device).unwrap(),
-            )
-            .unwrap();
-            let mut found = false;
-            for (name, var) in new_var_map.iter_mut() {
-                if name == k {
-                    var.set(&new_tensor).unwrap();
-                    found = true;
-
-                    // let is_equal = var
-                    //     .as_tensor()
-                    //     .to_dtype(DType::F32)
-                    //     .unwrap()
-                    //     .eq(&new_tensor.as_tensor().to_dtype(DType::F32).unwrap())
-                    //     .unwrap();
-                    // let is_equal_base = var
-                    //     .as_tensor()
-                    //     .to_dtype(DType::F32)
-                    //     .unwrap()
-                    //     .eq(&var.as_tensor().to_dtype(DType::F32).unwrap())
-                    //     .unwrap();
-
-                    let v1 = var
-                        .as_tensor()
-                        .to_dtype(DType::F32)
-                        .unwrap()
-                        .flatten_all()
-                        .unwrap()
-                        .to_vec1::<f32>()
-                        .unwrap();
-                    let v2 = new_tensor
-                        .as_tensor()
-                        .to_dtype(DType::F32)
-                        .unwrap()
-                        .flatten_all()
-                        .unwrap()
-                        .to_vec1::<f32>()
-                        .unwrap();
-
-                    if v1 != v2 {
-                        panic!();
-                    }
+            // We perform a deep copy of the varmap
+            var_map.iter().for_each(|(k, v)| {
+                let new_tensor = candle_core::Var::from_tensor(
+                    &v.copy().unwrap().to_device(&self.clone_device).unwrap(),
+                )
+                .unwrap();
+                if let Some(v) = new_var_map.get(k) {
+                    v.set(&new_tensor).unwrap();
                 }
-            }
-
-            if !found {
-                panic!();
-            }
-
-            // copy_net
-            //     .var_map
-            //     .data()
-            //     .lock()
-            //     .unwrap()
-            //     .insert(k.clone(), new_tensor)
-            //     .unwrap();
-        });
+            });
+        }
+        copy_net
+            .set_batch_norm_tensors(copy_net.var_map.clone())
+            .unwrap();
 
         copy_net
     }

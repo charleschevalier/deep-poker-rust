@@ -9,10 +9,8 @@ use crate::game::hand_state::HandState;
 use crate::game::tree::Tree;
 use crate::helper;
 
-use candle_core::cuda_backend::cudarc::cublas::result;
 use candle_core::{Device, Tensor};
 use candle_nn::Optimizer;
-use itertools::cloned;
 use std::vec;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -319,24 +317,11 @@ impl<'a> Trainer<'a> {
                 optimizer_embedding.step(&gradients_embedding)?;
             }
 
-            self.test_clone(&trained_network, iteration as u32)?;
-
-            let file_name = Path::new(&self.output_path).join(format!("poker_network_{}.pt", iteration));
-            trained_network.save_var_map(
-                file_name.clone(),
-            )?;
-            let mut cloned_network = PokerNetwork::new(
-                self.player_cnt,
-                self.action_config.clone(),
-                self.device.clone(),
-                self.trainer_config.agents_device.clone(),
-                false,
-            )?;
-            cloned_network.load_var_map(file_name)?;
+            // self.test_clone(&trained_network, iteration as u32)?;
 
             Tree::print_first_actions(
-                &cloned_network,
-                &self.device.clone(),
+                &trained_network.clone(),
+                &self.trainer_config.agents_device.clone(),
                 self.trainer_config.no_invalid_for_traverser,
                 self.action_config
             )?;
@@ -349,11 +334,11 @@ impl<'a> Trainer<'a> {
             //     )?;
             // }
 
-            // if iteration > 0 && (iteration % self.trainer_config.save_interval as usize == 0 || iteration == 25) {
-                // trained_network.var_map.save(
-                //     Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration)),
-                // )?;
-            // }
+            if iteration > 0 && (iteration % self.trainer_config.save_interval as usize == 0 || iteration == 25) {
+                trained_network.save_var_map(
+                    Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration)),
+                )?;
+            }
 
             // Put a new agent in the pool every 100 iterations
             if iteration % self.trainer_config.new_agent_interval as usize == 0 || iteration == 25 {
