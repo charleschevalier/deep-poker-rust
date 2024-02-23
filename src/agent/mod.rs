@@ -19,3 +19,4 @@ pub trait Agent: Sync + Send {
 pub mod agent_network;
 pub mod agent_pool;
 pub mod agent_random;
+pub mod tournament;

@@ -3,13 +3,14 @@ use super::poker_network::PokerNetwork;
 use super::trainer_config::TrainerConfig;
 use crate::agent::agent_network::AgentNetwork;
 use crate::agent::agent_pool::AgentPool;
+use crate::agent::tournament::Tournament;
 use crate::agent::Agent;
 use crate::game::action::ActionConfig;
 use crate::game::hand_state::HandState;
 use crate::game::tree::Tree;
 
 use candle_core::{Device, Tensor};
-use candle_nn::Optimizer;
+use candle_nn::{Optimizer, ParamsAdamW};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -62,31 +63,80 @@ impl<'a> Trainer<'a> {
             true,
         )?;
 
-        let mut agent_pool = AgentPool::new(self.trainer_config.agent_count);
+        // Select best agents
+        println!("Init agents...");
+        let mut tournament = Tournament::new(
+            self.player_cnt,
+            self.action_config.clone(),
+            self.trainer_config.agents_device.clone(),
+        );
 
         // Load previous training
-        let latest_iteration = self.load_existing(&mut trained_network, &mut agent_pool)?;
-
-        // Select best agents
-        self.refresh_agents(&mut agent_pool)?;
+        let agent_pool = Arc::new(Mutex::new(AgentPool::new(self.trainer_config.agent_count)));
+        let latest_iteration = self.load_existing(
+            Arc::clone(&agent_pool),
+            &mut trained_network,
+            &mut tournament,
+        )?;
+        let out_path = Path::new(&self.output_path);
+        if !out_path
+            .join(format!("tournament_{}.txt", latest_iteration))
+            .exists()
+        {
+            for n in 0..10000 {
+                println!("Refreshing agents...");
+                self.refresh_agents(Arc::clone(&agent_pool), &mut tournament, n == 0)?;
+            }
+            tournament.save_state(out_path.join(format!("tournament_{}.txt", latest_iteration)));
+        }
 
         // Build optimizers
-        let mut optimizer_embedding = AdamWCustom::new_lr(
+        println!("Building optimizers...");
+        // let mut optimizer_embedding = AdamWCustom::new_lr(
+        //     trained_network.get_siamese_vars(),
+        //     self.trainer_config.learning_rate,
+        // )?;
+        let mut optimizer_embedding = AdamWCustom::new(
             trained_network.get_siamese_vars(),
-            self.trainer_config.learning_rate,
+            ParamsAdamW {
+                lr: self.trainer_config.learning_rate,
+                beta1: 0.95,
+                beta2: 0.995,
+                eps: 1e-8,
+                weight_decay: 0.01,
+            },
         )?;
         optimizer_embedding.set_step(latest_iteration as usize * self.trainer_config.update_step);
 
-        // optimizer_embedding.step(grads)?;
-        let mut optimizer_policy = AdamWCustom::new_lr(
+        // let mut optimizer_policy = AdamWCustom::new_lr(
+        //     trained_network.get_actor_vars(),
+        //     self.trainer_config.learning_rate / 5.0,
+        // )?;
+        let mut optimizer_policy = AdamWCustom::new(
             trained_network.get_actor_vars(),
-            self.trainer_config.learning_rate / 5.0,
+            ParamsAdamW {
+                lr: self.trainer_config.learning_rate,
+                beta1: 0.95,
+                beta2: 0.995,
+                eps: 1e-8,
+                weight_decay: 0.01,
+            },
         )?;
         optimizer_policy.set_step(latest_iteration as usize * self.trainer_config.update_step);
 
-        let mut optimizer_critic = AdamWCustom::new_lr(
+        // let mut optimizer_critic = AdamWCustom::new_lr(
+        //     trained_network.get_critic_vars(),
+        //     self.trainer_config.learning_rate,
+        // )?;
+        let mut optimizer_critic = AdamWCustom::new(
             trained_network.get_critic_vars(),
-            self.trainer_config.learning_rate,
+            ParamsAdamW {
+                lr: self.trainer_config.learning_rate,
+                beta1: 0.95,
+                beta2: 0.995,
+                eps: 1e-8,
+                weight_decay: 0.01,
+            },
         )?;
         optimizer_critic.set_step(latest_iteration as usize * self.trainer_config.update_step);
 
@@ -97,7 +147,7 @@ impl<'a> Trainer<'a> {
             // Rollout hands and build hand states
             let mut hand_states = self.build_hand_states(
                 &trained_network,
-                &agent_pool,
+                Arc::clone(&agent_pool),
                 self.trainer_config.epsilon_greedy_factor
                     * self
                         .trainer_config
@@ -288,22 +338,6 @@ impl<'a> Trainer<'a> {
                         let grad_policy = gradients_policy.get_id(v.id());
                         let grad_value = gradients_value.get_id(v.id());
 
-                        // if grad_policy.is_some() {
-                        //     if let Err(e) = helper::check_tensor(grad_policy.unwrap()) {
-                        //         println!("PROBS: {:?}", helper::fast_flatten(&probs_tensor));
-                        //         println!(
-                        //             "PROBS LOG: {:?}",
-                        //             helper::fast_flatten(&probs_log_tensor)
-                        //         );
-                        //         println!(
-                        //             "OLD PROBS LOG: {:?}",
-                        //             helper::fast_flatten(&old_probs_log_tensor)
-                        //         );
-                        //         println!("Policy gradient error at key {}: {}", k, e);
-                        //         panic!("Policy gradient error");
-                        //     }
-                        // }
-
                         if k.starts_with("siamese") && grad_policy.is_some() && grad_value.is_some()
                         {
                             let grad_weighted = ((grad_policy.unwrap() * 0.5).unwrap()
@@ -336,17 +370,19 @@ impl<'a> Trainer<'a> {
             //     )?;
             // }
 
+            // Put a new agent in the pool every 100 iterations
             if iteration > 0
                 && (iteration % self.trainer_config.save_interval as usize == 0 || iteration == 25)
             {
-                trained_network.save_var_map(
-                    Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration)),
-                )?;
-            }
+                let net_file =
+                    Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration));
+                trained_network.save_var_map(net_file.clone())?;
 
-            // Put a new agent in the pool every 100 iterations
-            if iteration % self.trainer_config.new_agent_interval as usize == 0 || iteration == 25 {
-                self.refresh_agents(&mut agent_pool)?;
+                tournament.add_agent(net_file.to_str().unwrap().to_string(), iteration as u32)?;
+                self.refresh_agents(Arc::clone(&agent_pool), &mut tournament, false)?;
+                tournament.save_state(
+                    Path::new(&self.output_path).join(&format!("tournament_{}.txt", iteration)),
+                );
             }
         }
 
@@ -356,12 +392,11 @@ impl<'a> Trainer<'a> {
     fn build_hand_states(
         &self,
         trained_network: &PokerNetwork,
-        agent_pool: &AgentPool,
+        agent_pool: Arc<Mutex<AgentPool>>,
         epsilon_greedy: f32,
     ) -> Result<Vec<HandState>, candle_core::Error> {
         let start_time = Instant::now();
         let hand_states_base = Arc::new(Mutex::new(Vec::new()));
-        let agent_pool_base = Arc::new(agent_pool.clone());
         let trained_agent_base: Arc<Box<dyn Agent>> =
             Arc::new(Box::new(AgentNetwork::new(trained_network.clone())));
 
@@ -369,15 +404,13 @@ impl<'a> Trainer<'a> {
         for _ in 0..self.n_workers {
             let hand_states = Arc::clone(&hand_states_base);
             let trained_agent = Arc::clone(&trained_agent_base);
-            let agent_start_time = Instant::now();
-            let agent_pool_clone = Arc::clone(&agent_pool_base);
+            let agent_pool_clone = Arc::clone(&agent_pool);
             let player_cnt = self.player_cnt;
             let action_config = self.action_config.clone();
             let no_invalid_for_traverser = self.trainer_config.no_invalid_for_traverser;
             let iterations = self.trainer_config.hands_per_player_per_iteration / self.n_workers;
             let use_epsilon_greedy = self.trainer_config.use_epsilon_greedy;
             let agent_device = self.trainer_config.agents_device.clone();
-            let duration = start_time.elapsed();
 
             self.thread_pool.execute(move || {
                 let mut new_hand_states = Vec::new();
@@ -390,7 +423,7 @@ impl<'a> Trainer<'a> {
                     let mut agents = Vec::new();
                     for p in 0..player_cnt {
                         let agent = if p != traverser {
-                            agent_pool_clone.get_agent().1
+                            agent_pool_clone.lock().unwrap().get_agent().1
                         } else {
                             Arc::clone(&trained_agent)
                         };
@@ -572,8 +605,9 @@ impl<'a> Trainer<'a> {
 
     fn load_existing(
         &self,
+        agent_pool: Arc<Mutex<AgentPool>>,
         trained_network: &mut PokerNetwork,
-        agent_pool: &mut AgentPool,
+        tournament: &mut Tournament,
     ) -> Result<u32, candle_core::Error> {
         // List files in output path
         let trained_network_path = Path::new(&self.output_path);
@@ -602,69 +636,81 @@ impl<'a> Trainer<'a> {
                 trained_network_path.join(format!("poker_network_{}.pt", latest_iteration)),
             )?;
 
-            if latest_iteration >= self.trainer_config.new_agent_interval {
-                let delta = latest_iteration % self.trainer_config.new_agent_interval;
-                let end = latest_iteration - delta;
-                let start = std::cmp::max(
-                    self.trainer_config.new_agent_interval as i32,
-                    end as i32 - 9 * self.trainer_config.new_agent_interval as i32,
+            if trained_network_path
+                .join(format!("tournament_{}.txt", latest_iteration))
+                .exists()
+            {
+                println!("Tournament: Loading state");
+                tournament.load_state(
+                    trained_network_path.join(format!("tournament_{}.txt", latest_iteration)),
                 );
-                for i in (start as u32..end + self.trainer_config.new_agent_interval)
-                    .step_by(self.trainer_config.new_agent_interval as usize)
-                {
-                    let mut network = PokerNetwork::new(
-                        self.player_cnt,
-                        self.action_config.clone(),
-                        self.trainer_config.agents_device.clone(),
-                        self.trainer_config.agents_device.clone(),
-                        false,
-                    )?;
-                    network.load_var_map(
-                        trained_network_path.join(format!("poker_network_{}.pt", i)),
-                    )?;
-                    agent_pool.add_agent(Box::new(AgentNetwork::new(network)));
-                }
+                let best_agents =
+                    tournament.get_best_agents(self.trainer_config.agent_count as usize);
+                let mut pool = agent_pool.lock().unwrap();
+                pool.set_agents(&best_agents);
             }
         }
 
         Ok(latest_iteration)
     }
 
-    fn refresh_agents(&self, agent_pool: &mut AgentPool) -> Result<(), candle_core::Error> {
-        // List files in output path
-        let trained_network_path = Path::new(&self.output_path);
-        let trained_network_files = trained_network_path.read_dir()?;
-        let mut model_files = Vec::new();
+    fn refresh_agents(
+        &self,
+        agent_pool: Arc<Mutex<AgentPool>>,
+        tournament: &mut Tournament,
+        init: bool,
+    ) -> Result<(), candle_core::Error> {
+        if init {
+            // List files in output path
+            let trained_network_path = Path::new(&self.output_path);
+            let trained_network_files = trained_network_path.read_dir()?;
+            let mut model_files = Vec::new();
 
-        for file in trained_network_files {
-            let file = file?;
-            let file_name = file.file_name();
-            let file_name = file_name.to_str().unwrap();
-            let file_name = file_name.split('_').collect::<Vec<&str>>();
+            for file in trained_network_files {
+                let file = file?;
+                let file_name = file.file_name();
+                let file_name = file_name.to_str().unwrap();
+                let file_name = file_name.split('_').collect::<Vec<&str>>();
 
-            if file_name.len() > 2 {
-                let split = file_name[2].split('.').collect::<Vec<&str>>();
-                if (split.len() == 2) && (split[1] == "pt") {
-                    let iteration = split[0].parse::<u32>()?;
-                    if iteration == 25 || iteration % 100 == 0 {
-                        model_files.push(
-                            trained_network_path
-                                .join(format!("poker_network_{}.pt", iteration))
-                                .to_str()
-                                .unwrap()
-                                .to_owned(),
-                        );
+                if file_name.len() > 2 {
+                    let split = file_name[2].split('.').collect::<Vec<&str>>();
+                    if (split.len() == 2) && (split[1] == "pt") {
+                        let iteration = split[0].parse::<u32>()?;
+                        if iteration == 25
+                            || iteration % self.trainer_config.new_agent_interval == 0
+                        {
+                            model_files.push((
+                                iteration,
+                                trained_network_path
+                                    .join(format!("poker_network_{}.pt", iteration))
+                                    .to_str()
+                                    .unwrap()
+                                    .to_string(),
+                            ));
+                        }
                     }
+                }
+            }
+
+            println!("Loading all agents...");
+            let mut cnt = 0;
+            for (iteration, file) in model_files.iter() {
+                tournament.add_agent(file.clone(), *iteration)?;
+                cnt += 1;
+                if cnt % 10 == 0 {
+                    println!("Loaded {} / {} agents", cnt, model_files.len());
                 }
             }
         }
 
-        agent_pool.play_tournament(
-            self.player_cnt,
-            self.action_config,
-            &model_files,
-            self.trainer_config.agents_iterations_per_match,
-            &self.trainer_config.agents_device,
-        )
+        println!("Playing tournament...");
+        tournament.play(100);
+        println!("Done...");
+
+        let best_agents = tournament.get_best_agents(self.trainer_config.agent_count as usize);
+
+        agent_pool.lock().unwrap().set_agents(&best_agents);
+
+        Ok(())
     }
 }

@@ -87,13 +87,13 @@ impl Optimizer for AdamWCustom {
 }
 
 impl AdamWCustom {
-    pub fn new_lr(vars: Vec<Var>, learning_rate: f64) -> Result<Self, candle_core::Error> {
+    /*pub fn new_lr(vars: Vec<Var>, learning_rate: f64) -> Result<Self, candle_core::Error> {
         let params = ParamsAdamW {
             lr: learning_rate,
             ..ParamsAdamW::default()
         };
         Self::new(vars, params)
-    }
+    }*/
 
     /*pub fn params(&self) -> &ParamsAdamW {
         &self.params
