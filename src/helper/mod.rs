@@ -1,6 +1,6 @@
 use candle_core::Tensor;
 
-pub fn fast_flatten(tensor: &Tensor) -> Vec<f32> {
+pub fn _fast_flatten(tensor: &Tensor) -> Vec<f32> {
     tensor
         .copy()
         .unwrap()
@@ -10,10 +10,10 @@ pub fn fast_flatten(tensor: &Tensor) -> Vec<f32> {
         .unwrap()
 }
 
-pub fn check_tensor(tensor: &Tensor) -> Result<(), Box<dyn std::error::Error>> {
+pub fn _check_tensor(tensor: &Tensor) -> Result<(), Box<dyn std::error::Error>> {
     let mut err: String = String::new();
 
-    if fast_flatten(tensor).iter().any(|x: &f32| x.is_nan()) {
+    if _fast_flatten(tensor).iter().any(|x: &f32| x.is_nan()) {
         err += "NaN in tensor\n";
     }
 

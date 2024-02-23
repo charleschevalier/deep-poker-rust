@@ -122,64 +122,29 @@ impl BasicBlock {
         Ok(out)
     }
 
-    fn get_batch_norm_tensors(&self) -> HashMap<String, Tensor> {
+    fn get_batch_norm_tensors(&self) -> Result<HashMap<String, Tensor>, candle_core::Error> {
         let mut map = HashMap::new();
         for i in 0..3 {
             map.insert(
                 format!("bn_{}.running_mean", i + 1),
-                self.bn[i].running_mean().copy().unwrap(),
+                self.bn[i].running_mean().copy()?,
             );
             map.insert(
                 format!("bn_{}.running_var", i + 1),
-                self.bn[i].running_var().copy().unwrap(),
+                self.bn[i].running_var().copy()?,
             );
             let (weight, bias) = self.bn[i].weight_and_bias().unwrap();
-            map.insert(format!("bn_{}.weight", i + 1), weight.copy().unwrap());
-            map.insert(format!("bn_{}.bias", i + 1), bias.copy().unwrap());
+            map.insert(format!("bn_{}.weight", i + 1), weight.copy()?);
+            map.insert(format!("bn_{}.bias", i + 1), bias.copy()?);
         }
-        map
+        Ok(map)
     }
 
-    fn set_batch_norm_tensors(&mut self, tensors: HashMap<String, Tensor>) {
+    fn set_batch_norm_tensors(
+        &mut self,
+        tensors: HashMap<String, Tensor>,
+    ) -> Result<(), candle_core::Error> {
         for i in 0..3 {
-            // let running_mean = tensors[&format!("bn_{}.running_mean", i + 1)]
-            //     .copy()
-            //     .unwrap();
-            // let running_mean_real = self.bn[i].running_mean();
-
-            // // Check if tensors are equal
-            // let diff = (running_mean - running_mean_real)
-            //     .unwrap()
-            //     .abs()
-            //     .unwrap()
-            //     .sum_all()
-            //     .unwrap()
-            //     .to_scalar::<f32>()
-            //     .unwrap();
-
-            // if diff > 1e-5 {
-            //     println!("Running mean for bn_{} is different", i + 1);
-            // }
-
-            // let running_var = tensors[&format!("bn_{}.running_var", i + 1)]
-            //     .copy()
-            //     .unwrap();
-            // let running_var_real = self.bn[i].running_var();
-
-            // // Check if tensors are equal
-            // let diff = (running_var - running_var_real)
-            //     .unwrap()
-            //     .abs()
-            //     .unwrap()
-            //     .sum_all()
-            //     .unwrap()
-            //     .to_scalar::<f32>()
-            //     .unwrap();
-
-            // if diff > 1e-5 {
-            //     println!("Running var for bn_{} is different", i + 1);
-            // }
-
             self.bn[i] = BatchNorm::new(
                 self.out_channels,
                 tensors[&format!("bn_{}.running_mean", i + 1)].clone(),
@@ -187,9 +152,9 @@ impl BasicBlock {
                 tensors[&format!("bn_{}.weight", i + 1)].clone(),
                 tensors[&format!("bn_{}.bias", i + 1)].clone(),
                 1e-5,
-            )
-            .unwrap();
+            )?;
         }
+        Ok(())
     }
 }
 
@@ -217,22 +182,25 @@ impl SiameseTwin {
         Ok(out)
     }
 
-    fn get_batch_norm_tensors(&self) -> HashMap<String, Tensor> {
+    fn get_batch_norm_tensors(&self) -> Result<HashMap<String, Tensor>, candle_core::Error> {
         let mut map = HashMap::new();
 
-        let tensors1 = self.conv_block_1.get_batch_norm_tensors();
+        let tensors1 = self.conv_block_1.get_batch_norm_tensors()?;
         for (k, v) in tensors1 {
             map.insert(format!("twin_1.{}", k), v);
         }
-        let tensors2 = self.conv_block_2.get_batch_norm_tensors();
+        let tensors2 = self.conv_block_2.get_batch_norm_tensors()?;
         for (k, v) in tensors2 {
             map.insert(format!("twin_2.{}", k), v);
         }
 
-        map
+        Ok(map)
     }
 
-    fn set_batch_norm_tensors(&mut self, tensors: HashMap<String, Tensor>) {
+    fn set_batch_norm_tensors(
+        &mut self,
+        tensors: HashMap<String, Tensor>,
+    ) -> Result<(), candle_core::Error> {
         let mut tensors1 = HashMap::new();
         let mut tensors2 = HashMap::new();
         for (k, v) in tensors {
@@ -243,8 +211,10 @@ impl SiameseTwin {
             }
         }
 
-        self.conv_block_1.set_batch_norm_tensors(tensors1);
-        self.conv_block_2.set_batch_norm_tensors(tensors2);
+        self.conv_block_1.set_batch_norm_tensors(tensors1)?;
+        self.conv_block_2.set_batch_norm_tensors(tensors2)?;
+
+        Ok(())
     }
 }
 
@@ -316,22 +286,25 @@ impl SiameseNetwork {
         Ok(output)
     }
 
-    pub fn get_batch_norm_tensors(&self) -> HashMap<String, Tensor> {
+    pub fn get_batch_norm_tensors(&self) -> Result<HashMap<String, Tensor>, candle_core::Error> {
         let mut map = HashMap::new();
 
-        let card_tensors = self.card_twin.get_batch_norm_tensors();
+        let card_tensors = self.card_twin.get_batch_norm_tensors()?;
         for (k, v) in card_tensors {
             map.insert(format!("card_twin.{}", k), v);
         }
-        let action_tensors = self.action_twin.get_batch_norm_tensors();
+        let action_tensors = self.action_twin.get_batch_norm_tensors()?;
         for (k, v) in action_tensors {
             map.insert(format!("action_twin.{}", k), v);
         }
 
-        map
+        Ok(map)
     }
 
-    pub fn set_batch_norm_tensors(&mut self, tensors: HashMap<String, Tensor>) {
+    pub fn set_batch_norm_tensors(
+        &mut self,
+        tensors: HashMap<String, Tensor>,
+    ) -> Result<(), candle_core::Error> {
         let mut card_tensors = HashMap::new();
         let mut action_tensors = HashMap::new();
         for (k, v) in tensors {
@@ -342,7 +315,9 @@ impl SiameseNetwork {
             }
         }
 
-        self.card_twin.set_batch_norm_tensors(card_tensors);
-        self.action_twin.set_batch_norm_tensors(action_tensors);
+        self.card_twin.set_batch_norm_tensors(card_tensors)?;
+        self.action_twin.set_batch_norm_tensors(action_tensors)?;
+
+        Ok(())
     }
 }

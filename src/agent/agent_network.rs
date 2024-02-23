@@ -1,4 +1,4 @@
-use super::{Agent, AgentClone};
+use super::Agent;
 use crate::game::hand_state::HandState;
 use crate::model::poker_network::PokerNetwork;
 use candle_core::Tensor;
@@ -7,20 +7,6 @@ use rand::distributions::Distribution;
 
 pub struct AgentNetwork {
     network: PokerNetwork,
-}
-
-impl AgentClone for AgentNetwork {
-    fn clone_box(&self) -> Box<dyn Agent> {
-        Box::new(self.clone())
-    }
-}
-
-impl Clone for AgentNetwork {
-    fn clone(&self) -> AgentNetwork {
-        AgentNetwork {
-            network: self.network.clone(),
-        }
-    }
 }
 
 impl Agent for AgentNetwork {

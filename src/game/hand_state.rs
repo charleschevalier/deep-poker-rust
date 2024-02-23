@@ -16,7 +16,7 @@ impl HandState {
         &self,
         action_config: &ActionConfig,
         device: &candle_core::Device,
-    ) -> Result<(Tensor, Tensor), Box<dyn std::error::Error>> {
+    ) -> Result<(Tensor, Tensor), candle_core::Error> {
         // Iterate on states for traverser
         let mut card_tensors: Vec<Tensor> = Vec::new();
         let mut action_tensors: Vec<Tensor> = Vec::new();
@@ -52,7 +52,7 @@ impl HandState {
         action_config: &ActionConfig,
         device: &candle_core::Device,
         current_state_index: usize,
-    ) -> Result<(Tensor, Tensor), Box<dyn std::error::Error>> {
+    ) -> Result<(Tensor, Tensor), candle_core::Error> {
         // Create card tensor
         // Shape is (street_cnt + 1 for all cards) x number_of_suits x number_of_ranks
         let mut card_vecs: Vec<Vec<Vec<f32>>> = vec![vec![vec![0.0; 13]; 4]; 6];
@@ -188,7 +188,7 @@ impl HandState {
         action_state_index: usize,
         action_config: &ActionConfig,
         device: &candle_core::Device,
-    ) -> Result<(Tensor, Tensor), Box<dyn std::error::Error>> {
+    ) -> Result<(Tensor, Tensor), candle_core::Error> {
         let action_state = &self.action_states[action_state_index];
 
         self.to_input(

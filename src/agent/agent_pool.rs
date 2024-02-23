@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use crate::{
     game::{action::ActionConfig, tree::Tree},
     model::poker_network::PokerNetwork,
@@ -9,11 +11,12 @@ use super::{agent_network::AgentNetwork, agent_random::AgentRandom};
 use rand::Rng;
 
 use itertools::Itertools;
+use threadpool::ThreadPool;
 
 pub struct AgentPool {
     agent_count: u32,
-    agents: Vec<Box<dyn Agent>>,
-    agent_random: Box<dyn Agent>,
+    agents: Vec<Arc<Box<dyn Agent>>>,
+    agent_random: Arc<Box<dyn Agent>>,
 }
 
 impl Clone for AgentPool {
@@ -21,7 +24,7 @@ impl Clone for AgentPool {
         AgentPool {
             agent_count: self.agent_count,
             agents: self.agents.clone(),
-            agent_random: self.agent_random.clone_box(),
+            agent_random: Arc::clone(&self.agent_random),
         }
     }
 }
@@ -31,17 +34,17 @@ impl AgentPool {
         AgentPool {
             agent_count,
             agents: Vec::new(),
-            agent_random: Box::new(AgentRandom {}),
+            agent_random: Arc::new(Box::new(AgentRandom {})),
         }
     }
 
     pub fn add_agent(&mut self, agent: Box<dyn Agent>) {
-        self.agents.push(agent);
+        self.agents.push(Arc::new(agent));
     }
 
-    pub fn get_agent(&self) -> (i32, &dyn Agent) {
+    pub fn get_agent(&self) -> (i32, Arc<Box<dyn Agent>>) {
         if self.agents.is_empty() {
-            return (-1, &*self.agent_random);
+            return (-1, Arc::clone(&self.agent_random));
         }
 
         let mut rng = rand::thread_rng();
@@ -50,7 +53,7 @@ impl AgentPool {
         if self.agents.len() < 3 {
             let random_float_0_1: f32 = rng.gen();
             if random_float_0_1 <= 0.25 {
-                return (-1, &*self.agent_random);
+                return (-1, Arc::clone(&self.agent_random));
             }
         }
 
@@ -61,7 +64,7 @@ impl AgentPool {
             rng.gen_range(0..self.agents.len())
         };
 
-        (rand_index as i32, &*self.agents[rand_index])
+        (rand_index as i32, Arc::clone(&self.agents[rand_index]))
     }
 
     pub fn play_tournament(
@@ -69,17 +72,19 @@ impl AgentPool {
         player_count: u32,
         action_config: &ActionConfig,
         model_files: &[String],
+        iterations_per_match: u32,
         device: &candle_core::Device,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), candle_core::Error> {
         println!(
             "Refreshing agents, playing tournament with {} agents",
             model_files.len()
         );
 
-        let iterations_per_match = 100;
         let wanted_agents = self.agent_count as usize;
         let max_agents_per_pool = player_count * 2;
         let available_agent_cnt = model_files.len();
+        let n_workers = num_cpus::get();
+        let thread_pool = ThreadPool::new(n_workers);
 
         if model_files.len() <= wanted_agents {
             // Load everything and return
@@ -133,12 +138,12 @@ impl AgentPool {
             agent_pool.push(pool);
         }
 
-        let mut total_won = vec![0.0f32; available_agent_cnt];
+        let total_won = Arc::new(Mutex::new(vec![0.0f32; available_agent_cnt]));
 
         // Play a round robin tournament in each pool
         for pool in agent_pool.iter() {
             // First, load agents
-            let mut pool_agents: Vec<Box<dyn Agent>> = Vec::new();
+            let mut pool_agents_base: Vec<Arc<Box<dyn Agent>>> = Vec::new();
             for agent_index in pool {
                 let mut network = PokerNetwork::new(
                     player_count,
@@ -147,10 +152,8 @@ impl AgentPool {
                     device.clone(),
                     false,
                 )?;
-                network
-                    .load_var_map(model_files[*agent_index].as_str())
-                    .unwrap();
-                pool_agents.push(Box::new(AgentNetwork::new(network)));
+                network.load_var_map(model_files[*agent_index].as_str())?;
+                pool_agents_base.push(Arc::new(Box::new(AgentNetwork::new(network))));
             }
 
             let mut schedule = Vec::new();
@@ -162,36 +165,57 @@ impl AgentPool {
                 }
             }
 
-            let mut tree = Tree::new(player_count, action_config);
+            let pool_arc = Arc::new(pool_agents_base);
 
             // Play N hands for each match up
             for g in schedule {
-                for _ in 0..iterations_per_match {
-                    // Assign each agent a random index between 0 and player_count
-                    let mut game = g.clone();
-                    let mut agents = Vec::new();
-                    let mut indexes = Vec::new();
-                    for _ in 0..player_count {
-                        let mut rng = rand::thread_rng();
-                        let rand_index = rng.gen_range(0..game.len());
-                        agents.push(pool_agents[rand_index].clone_box());
-                        indexes.push(game[rand_index]);
-                        game.remove(rand_index);
+                let pool_clone = Arc::clone(&pool_arc);
+                let ac_clone = action_config.clone();
+                let device_clone = device.clone();
+                let total_won_clone = Arc::clone(&total_won);
+
+                thread_pool.execute(move || {
+                    let mut tree = Tree::new(player_count, &ac_clone);
+                    let mut total_won_local = vec![0.0f32; available_agent_cnt];
+
+                    for _ in 0..iterations_per_match {
+                        // Assign each agent a random index between 0 and player_count
+                        let mut game = g.clone();
+                        let mut agents = Vec::new();
+                        let mut indexes = Vec::new();
+                        for _ in 0..player_count {
+                            let mut rng = rand::thread_rng();
+                            let rand_index = rng.gen_range(0..game.len());
+                            agents.push(Arc::clone(&pool_clone[rand_index]));
+                            indexes.push(game[rand_index]);
+                            game.remove(rand_index);
+                        }
+
+                        // Play one game
+                        let rewards = match tree.play_one_hand(&agents, &device_clone, true) {
+                            Ok(r) => r,
+                            Err(error) => panic!("ERROR in play_one_hand: {:?}", error),
+                        };
+                        for p in 0..player_count as usize {
+                            total_won_local[indexes[p]] += rewards[p];
+                        }
                     }
 
-                    // Play one game
-                    let rewards = tree.play_one_hand(&agents, device, true)?;
-                    for p in 0..player_count as usize {
-                        total_won[indexes[p]] += rewards[p];
+                    let mut total_won_locked = total_won_clone.lock().unwrap();
+                    for p in 0..available_agent_cnt {
+                        total_won_locked[p] += total_won_local[p];
                     }
-                }
+                });
             }
 
+            thread_pool.join();
+
             // Print results
+            let total_won_locked = total_won.lock().unwrap();
             for agent_index in pool.iter() {
                 println!(
                     "Agent {} won {} chips",
-                    model_files[*agent_index], total_won[*agent_index]
+                    model_files[*agent_index], total_won_locked[*agent_index]
                 );
             }
 
@@ -200,29 +224,57 @@ impl AgentPool {
 
         // We keep the 80% of wanted_agents as best agents
         let mut best_agents: Vec<usize> = Vec::new();
-        for _ in 0..(wanted_agents * 8 / 10) {
-            let mut max_index = 0;
-            let mut max_value = 0.0;
-            for (i, v) in total_won.iter().enumerate() {
-                if !best_agents.contains(&i) && *v > max_value {
-                    max_value = *v;
-                    max_index = i;
+        {
+            let total_won_clone = Arc::clone(&total_won);
+            let total_won_locked = total_won_clone.lock().unwrap();
+
+            for _ in 0..(wanted_agents * 8 / 10) {
+                let mut max_index = 0;
+                let mut max_value = -std::f32::MAX;
+                let mut found = false;
+                for (i, v) in total_won_locked.iter().enumerate() {
+                    if !best_agents.contains(&i) && *v > max_value {
+                        max_value = *v;
+                        max_index = i;
+                        found = true;
+                    }
                 }
+
+                if !found {
+                    break;
+                }
+                println!(
+                    "Best agents: adding index {} with value {}, file: {}",
+                    max_index, max_value, model_files[max_index]
+                );
+                best_agents.push(max_index);
             }
-            best_agents.push(max_index);
         }
 
         // We keep the 20% of wanted_agents as worst agents
         let mut worst_agents: Vec<usize> = Vec::new();
+
         for _ in 0..(wanted_agents * 2 / 10) {
             let mut min_index = 0;
             let mut min_value = std::f32::MAX;
-            for (i, v) in total_won.iter().enumerate() {
-                if !worst_agents.contains(&i) && *v < min_value {
+            let total_won_clone = Arc::clone(&total_won);
+            let total_won_locked = total_won_clone.lock().unwrap();
+            let mut found = false;
+            for (i, v) in total_won_locked.iter().enumerate() {
+                if !worst_agents.contains(&i) && !best_agents.contains(&i) && *v < min_value {
                     min_value = *v;
                     min_index = i;
+                    found = true;
                 }
             }
+
+            if !found {
+                break;
+            }
+            println!(
+                "Worst agents: adding index {} with value {}, file: {}",
+                min_index, min_value, model_files[min_index]
+            );
             worst_agents.push(min_index);
         }
 
@@ -250,7 +302,7 @@ impl AgentPool {
         action_config: &ActionConfig,
         agent_files: &[String],
         device: &candle_core::Device,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), candle_core::Error> {
         self.agents.clear();
         for agent_file in agent_files.iter() {
             let mut network = PokerNetwork::new(

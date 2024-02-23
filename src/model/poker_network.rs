@@ -25,12 +25,11 @@ impl PokerNetwork {
         device: Device,
         clone_device: Device,
         train: bool,
-    ) -> Result<PokerNetwork, Box<dyn std::error::Error>> {
+    ) -> Result<PokerNetwork, candle_core::Error> {
         let var_map = VarMap::new();
         let vb = VarBuilder::from_varmap(&var_map, DType::F32, &device);
 
         let siamese_network = SiameseNetwork::new(
-            // let siamese_network = SiameseNetworkLinear::new(
             player_count,
             3 + action_config.postflop_raise_sizes.len() as u32, // Each raise size + fold, call, check
             player_count as usize * 3, // 3 actions max per player per street => TODO: prevent situations where we have more than 3 actions
@@ -59,7 +58,7 @@ impl PokerNetwork {
         card_tensor: &Tensor,
         action_tensor: &Tensor,
         train: bool,
-    ) -> Result<Tensor, Box<dyn std::error::Error>> {
+    ) -> Result<Tensor, candle_core::Error> {
         let x = self
             .siamese_network
             .forward(card_tensor, action_tensor, train)?;
@@ -71,17 +70,16 @@ impl PokerNetwork {
         card_tensor: &Tensor,
         action_tensor: &Tensor,
         train: bool,
-    ) -> Result<Tensor, Box<dyn std::error::Error>> {
-        Ok(self
-            .siamese_network
-            .forward(card_tensor, action_tensor, train)?)
+    ) -> Result<Tensor, candle_core::Error> {
+        self.siamese_network
+            .forward(card_tensor, action_tensor, train)
     }
 
-    pub fn forward_actor(&self, x: &Tensor) -> Result<Tensor, Box<dyn std::error::Error>> {
+    pub fn forward_actor(&self, x: &Tensor) -> Result<Tensor, candle_core::Error> {
         self.actor_network.forward(x)
     }
 
-    pub fn forward_critic(&self, x: &Tensor) -> Result<Option<Tensor>, Box<dyn std::error::Error>> {
+    pub fn forward_critic(&self, x: &Tensor) -> Result<Option<Tensor>, candle_core::Error> {
         if self.train {
             let critic_output = self.critic_network.forward(x)?;
             Ok(Some(critic_output))
@@ -97,7 +95,7 @@ impl PokerNetwork {
     pub fn load_var_map<P: AsRef<std::path::Path>>(
         &mut self,
         file_path: P,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), candle_core::Error> {
         self.var_map.load(file_path)?;
         self.set_batch_norm_tensors(self.var_map.clone())?;
         Ok(())
@@ -110,15 +108,14 @@ impl PokerNetwork {
                 siamese_tensors.insert(stripped.to_string(), v.as_tensor().copy()?);
             }
         }
-        self.siamese_network.set_batch_norm_tensors(siamese_tensors);
-        Ok(())
+        self.siamese_network.set_batch_norm_tensors(siamese_tensors)
     }
 
     pub fn save_var_map<P: AsRef<std::path::Path>>(
         &self,
         file_path: P,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let batch_norm_tensors = self.get_batch_norm_tensors();
+    ) -> Result<(), candle_core::Error> {
+        let batch_norm_tensors = self.get_batch_norm_tensors()?;
 
         for (k, v) in self.var_map.data().lock().unwrap().iter() {
             if batch_norm_tensors.contains_key(k) {
@@ -154,13 +151,13 @@ impl PokerNetwork {
         helper::filter_var_map_by_prefix(&self.var_map, &["critic"])
     }
 
-    pub fn get_batch_norm_tensors(&self) -> HashMap<String, Tensor> {
+    pub fn get_batch_norm_tensors(&self) -> Result<HashMap<String, Tensor>, candle_core::Error> {
         let mut result = HashMap::new();
-        let tensors = self.siamese_network.get_batch_norm_tensors();
+        let tensors = self.siamese_network.get_batch_norm_tensors()?;
         for (k, v) in tensors {
             result.insert(format!("siamese.{}", k), v);
         }
-        result
+        Ok(result)
     }
 }
 

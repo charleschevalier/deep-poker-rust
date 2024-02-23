@@ -7,10 +7,7 @@ pub struct ActorNetwork {
 }
 
 impl ActorNetwork {
-    pub fn new(
-        vb: VarBuilder,
-        action_count: usize,
-    ) -> Result<ActorNetwork, Box<dyn std::error::Error>> {
+    pub fn new(vb: VarBuilder, action_count: usize) -> Result<ActorNetwork, candle_core::Error> {
         let weight_dims: Vec<Vec<usize>> = vec![vec![512, 512], vec![action_count, 512]];
 
         Ok(ActorNetwork {
@@ -19,7 +16,7 @@ impl ActorNetwork {
         })
     }
 
-    pub fn forward(&self, x: &Tensor) -> Result<Tensor, Box<dyn std::error::Error>> {
+    pub fn forward(&self, x: &Tensor) -> Result<Tensor, candle_core::Error> {
         let mut y = self.linear_1.forward(x)?;
         y = y.relu()?;
         y = self.linear_2.forward(&y)?;

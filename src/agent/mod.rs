@@ -1,10 +1,10 @@
 use crate::game::hand_state::HandState;
 
-pub trait AgentClone {
-    fn clone_box(&self) -> Box<dyn Agent>;
-}
+// pub trait AgentClone {
+//     fn clone_box(&self) -> Box<dyn Agent>;
+// }
 
-pub trait Agent: AgentClone + Sync + Send {
+pub trait Agent: Sync + Send {
     fn choose_action(
         &self,
         hand_state: &HandState,
@@ -14,12 +14,6 @@ pub trait Agent: AgentClone + Sync + Send {
         device: &candle_core::Device,
         no_invalid: bool,
     ) -> Result<usize, Box<dyn std::error::Error>>;
-}
-
-impl Clone for Box<dyn Agent> {
-    fn clone(&self) -> Box<dyn Agent> {
-        self.clone_box()
-    }
 }
 
 pub mod agent_network;

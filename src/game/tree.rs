@@ -49,7 +49,7 @@ impl<'a> Tree<'a> {
     pub fn traverse(
         &mut self,
         traverser: u32,
-        agents: &Vec<&dyn Agent>,
+        agents: &Vec<Arc<Box<dyn Agent>>>,
         device: &candle_core::Device,
         no_invalid_for_traverser: bool,
         epsilon_greedy: f32,
@@ -76,7 +76,7 @@ impl<'a> Tree<'a> {
     fn traverse_state(
         state_option: &mut Option<Box<dyn State<'a> + 'a>>,
         hand_state: &mut HandState,
-        agents: &Vec<&dyn Agent>,
+        agents: &Vec<Arc<Box<dyn Agent>>>,
         action_config: &ActionConfig,
         device: &candle_core::Device,
         no_invalid_for_traverser: bool,
@@ -260,7 +260,7 @@ impl<'a> Tree<'a> {
         base_device: &candle_core::Device,
         base_no_invalid_for_traverser: bool,
         base_action_config: &ActionConfig,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), candle_core::Error> {
         let n_workers = num_cpus::get();
         let thread_pool = ThreadPool::new(n_workers);
 
@@ -492,7 +492,7 @@ impl<'a> Tree<'a> {
 
     pub fn play_one_hand(
         &mut self,
-        agents: &[Box<dyn Agent>],
+        agents: &[Arc<Box<dyn Agent>>],
         device: &candle_core::Device,
         silent: bool,
     ) -> Result<Vec<f32>, Box<dyn std::error::Error>> {

@@ -1,21 +1,9 @@
-use super::{Agent, AgentClone};
+use super::Agent;
 use crate::game::hand_state::HandState;
 
 use rand::Rng;
 
 pub struct AgentRandom {}
-
-impl AgentClone for AgentRandom {
-    fn clone_box(&self) -> Box<dyn Agent> {
-        Box::new(self.clone())
-    }
-}
-
-impl Clone for AgentRandom {
-    fn clone(&self) -> AgentRandom {
-        AgentRandom {}
-    }
-}
 
 impl Agent for AgentRandom {
     fn choose_action(

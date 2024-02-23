@@ -17,4 +17,5 @@ pub struct TrainerConfig {
     pub use_entropy: bool,
     pub entropy_beta: f64,
     pub agents_device: Device,
+    pub agents_iterations_per_match: u32,
 }
