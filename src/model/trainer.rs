@@ -83,10 +83,8 @@ impl<'a> Trainer<'a> {
             .join(format!("tournament_{}.txt", latest_iteration))
             .exists()
         {
-            for n in 0..10000 {
-                println!("Refreshing agents...");
-                self.refresh_agents(Arc::clone(&agent_pool), &mut tournament, n == 0)?;
-            }
+            println!("Refreshing agents...");
+            self.refresh_agents(Arc::clone(&agent_pool), &mut tournament, true)?;
             tournament.save_state(out_path.join(format!("tournament_{}.txt", latest_iteration)));
         }
 
@@ -703,13 +701,18 @@ impl<'a> Trainer<'a> {
             }
         }
 
-        println!("Playing tournament...");
-        tournament.play(100);
-        println!("Done...");
-
-        let best_agents = tournament.get_best_agents(self.trainer_config.agent_count as usize);
-
-        agent_pool.lock().unwrap().set_agents(&best_agents);
+        if tournament.get_agent_count() < self.trainer_config.agent_count as usize
+            || tournament.get_agent_count() < self.player_cnt as usize
+        {
+            let best_agents = tournament.get_best_agents(self.trainer_config.agent_count as usize);
+            agent_pool.lock().unwrap().set_agents(&best_agents);
+        } else {
+            println!("Playing tournament...");
+            tournament.play(1000);
+            println!("Done...");
+            let best_agents = tournament.get_best_agents(self.trainer_config.agent_count as usize);
+            agent_pool.lock().unwrap().set_agents(&best_agents);
+        }
 
         Ok(())
     }

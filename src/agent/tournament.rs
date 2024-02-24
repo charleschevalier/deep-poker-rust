@@ -1,6 +1,8 @@
 use std::{
     cmp::Ordering,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, TryLockError},
+    thread,
+    time::Duration,
 };
 
 use candle_core::Device;
@@ -65,30 +67,43 @@ impl Tournament {
     }
 
     pub fn get_best_agents(&mut self, cnt: usize) -> Vec<Arc<Box<dyn Agent>>> {
-        let mut result = Vec::new();
-        self.agents
-            .sort_by(|a, b| b.lock().unwrap().elo.total_cmp(&a.lock().unwrap().elo));
-        for i in 0..cnt {
-            let agent = self.agents[i].lock().unwrap();
-            println!("Taking agent: {}, elo: {}", agent.iteration, agent.elo);
-            result.push(Arc::clone(&agent.agent_network));
+        if self.agents.len() > cnt {
+            let mut result = Vec::new();
+            self.agents
+                .sort_by(|a, b| b.lock().unwrap().elo.total_cmp(&a.lock().unwrap().elo));
+            for i in 0..cnt {
+                let agent = self.agents[i].lock().unwrap();
+                println!("Taking agent: {}, elo: {}", agent.iteration, agent.elo);
+                result.push(Arc::clone(&agent.agent_network));
+            }
+            result
+        } else {
+            let mut result = Vec::new();
+            for agent in &self.agents {
+                let agent = agent.lock().unwrap();
+                result.push(Arc::clone(&agent.agent_network));
+            }
+            result
         }
-        result
+    }
+
+    pub fn get_agent_count(&self) -> usize {
+        self.agents.len()
     }
 
     pub fn play(&mut self, rounds: usize) {
         // Dynamically select agents based on Elo for each game
         self.agents
             .sort_by(|a, b| b.lock().unwrap().elo.total_cmp(&a.lock().unwrap().elo));
+
         let agents_tournament_base = Arc::new(Mutex::new(self.agents.clone()));
         let n_workers = num_cpus::get();
         let thread_pool = ThreadPool::new(n_workers);
-        let elo_k = 10.0;
+        let elo_k = 90.0;
 
         let batch_size = (self.agents.len() as f32 / n_workers as f32).ceil() as usize;
 
         for worker in 0..n_workers {
-            // println!("Round: {} / {}", round, rounds);
             let player_count = self.player_count;
             let agents_length = self.agents.len();
             let start = worker * batch_size;
@@ -100,113 +115,131 @@ impl Tournament {
             thread_pool.execute(move || {
                 // Run the loop N times
                 for _ in 0..rounds {
-                    // We process each player on time per iteration
                     for agent_index in start..end {
-                        // println!("Agent: {} / {}", agent_index, agents_length);
+                        let mut agents_game: Vec<Arc<Mutex<AgentTournament>>>;
+
+                        // Lock the tournament agents to prepare the match
                         // Choose agents with closer Elo for fairer matches
-                        let current_agent =
-                            Arc::clone(&agents_tournament.lock().unwrap()[agent_index]);
-                        let chosen_elo = current_agent.lock().unwrap().elo;
+                        {
+                            let agents_locked = agents_tournament.lock().unwrap();
+                            let current_agent = Arc::clone(&agents_locked[agent_index]);
+                            let chosen_elo = current_agent.lock().unwrap().elo;
 
-                        // Step 1: Sort the remaining players by their elo difference to the chosen player
-                        let mut elo_differences = agents_tournament
-                            .lock()
-                            .unwrap()
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(index, agent)| {
-                                if index != agent_index {
-                                    let agent = agent.lock().unwrap();
-                                    Some((index, (chosen_elo - agent.elo).abs()))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect::<Vec<_>>();
+                            // Step 1: Sort the remaining players by their elo difference to the chosen player
+                            let mut elo_differences = agents_locked
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(index, agent)| {
+                                    if index != agent_index {
+                                        let agent = agent.lock().unwrap();
+                                        Some((index, (chosen_elo - agent.elo).abs()))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<Vec<_>>();
 
-                        elo_differences
-                            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+                            elo_differences
+                                .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
 
-                        // Step 2: Take N-1 agents with the closest elo difference, then add current agent
-                        let mut game_agents = elo_differences
-                            .iter()
-                            .take((player_count - 1) as usize)
-                            .map(|&(index, _)| {
-                                Arc::clone(&agents_tournament.lock().unwrap()[index])
-                            })
-                            .collect::<Vec<_>>();
+                            // Step 2: Take N-1 agents with the closest elo difference, then add current agent
+                            agents_game = elo_differences
+                                .iter()
+                                .take((player_count - 1) as usize)
+                                .map(|&(index, _)| Arc::clone(&agents_locked[index]))
+                                .collect::<Vec<_>>();
 
-                        game_agents.push(current_agent);
+                            agents_game.push(current_agent);
+                        }
+
+                        // Assign each agent a random index between 0 and player_count
+                        let mut tree_agents = Vec::new();
+                        let mut indexes = Vec::new();
+                        {
+                            let mut indexes_sorted = (0..player_count as usize).collect::<Vec<_>>();
+                            for _ in 0..player_count {
+                                let mut rng = rand::thread_rng();
+                                let vec_index = rng.gen_range(0..indexes_sorted.len());
+                                let agent_index = indexes_sorted[vec_index];
+                                let agent = agents_game[agent_index].lock().unwrap();
+                                tree_agents.push(Arc::clone(&agent.agent_network));
+                                indexes.push(agent_index);
+                                indexes_sorted.remove(vec_index);
+                            }
+                        }
 
                         // Play one game
                         let mut total_won = vec![0.0f32; player_count as usize];
                         let mut tree = Tree::new(player_count, &action_config);
-
-                        // Assign each agent a random index between 0 and player_count
-                        let mut game = (0..player_count).collect::<Vec<_>>();
-                        let mut agents_tour = Vec::new();
-                        let mut indexes = Vec::new();
-                        for _ in 0..player_count {
-                            let mut rng = rand::thread_rng();
-                            let rand_index = rng.gen_range(0..game.len());
-                            agents_tour.push(Arc::clone(&game_agents[rand_index]));
-                            indexes.push(game[rand_index]);
-                            game.remove(rand_index);
-                        }
-                        let agents: Vec<Arc<Box<dyn Agent>>> = agents_tour
-                            .iter()
-                            .map(|p| Arc::clone(&p.lock().unwrap().agent_network))
-                            .collect::<Vec<_>>();
-
-                        // Play one game
-                        let rewards = match tree.play_one_hand(&agents, &device, true) {
-                            Ok(r) => r,
-                            Err(error) => panic!("ERROR in play_one_hand: {:?}", error),
-                        };
-                        for p in 0..player_count as usize {
-                            total_won[indexes[p] as usize] += rewards[p];
-                        }
-
-                        // Check each pair of players to determine winner(s) and update ELO
-                        let mut elo_diff = vec![0.0f32; player_count as usize];
-                        for i in 0..player_count as usize {
-                            for j in i + 1..player_count as usize {
-                                let player_i_result = if total_won[i] > total_won[j] {
-                                    1.0
-                                } else if total_won[i] < total_won[j] {
-                                    0.0
-                                } else {
-                                    0.5
-                                };
-
-                                let agent_i = game_agents[i].lock().unwrap();
-                                let agent_j = game_agents[j].lock().unwrap();
-
-                                let elo_i = agent_i.elo;
-                                let elo_j = agent_j.elo;
-
-                                let prob = Self::calculate_expected_win_prob(elo_i, elo_j, elo_k);
-
-                                elo_diff[i] +=
-                                    Self::calculate_elo_diff(prob, player_i_result, elo_k);
-                                elo_diff[j] += Self::calculate_elo_diff(
-                                    1.0 - prob,
-                                    1.0 - player_i_result,
-                                    elo_k,
-                                );
+                        {
+                            let rewards = match tree.play_one_hand(&tree_agents, &device, true) {
+                                Ok(r) => r,
+                                Err(error) => panic!("ERROR in play_one_hand: {:?}", error),
+                            };
+                            for p in 0..player_count as usize {
+                                total_won[indexes[p]] += rewards[p];
                             }
                         }
 
-                        // let base_elo = game_agents
-                        //     .iter()
-                        //     .map(|a| a.lock().unwrap().elo)
-                        //     .collect::<Vec<_>>();
+                        // Lock players & update ELO
+                        {
+                            let mut agents_locked = vec![];
+                            // We need to lock all players at once to avoid deadlocks, or wait if one fails
+                            loop {
+                                for arc_mutex in &agents_game {
+                                    match arc_mutex.try_lock() {
+                                        Ok(guard) => agents_locked.push(guard),
+                                        Err(TryLockError::WouldBlock) => {
+                                            agents_locked.clear(); // Release any acquired locks
+                                            thread::sleep(Duration::from_millis(1)); // Prevent busy-waiting
+                                            break;
+                                        }
+                                        Err(_) => panic!("Mutex is poisoned"),
+                                    }
+                                }
+                                if agents_locked.len() == agents_game.len() {
+                                    break; // Successfully locked all Mutexes
+                                }
+                            }
 
-                        // Update ELO
-                        for i in 0..player_count as usize {
-                            let mut agent = game_agents[i].lock().unwrap();
-                            agent.elo += elo_diff[i];
-                            agent.elo = agent.elo.max(0.0);
+                            // Check each pair of players to determine winner(s) and update ELO
+                            let mut elo_diff = vec![0.0f32; player_count as usize];
+                            for i in 0..player_count as usize {
+                                for j in i + 1..player_count as usize {
+                                    let player_i_result = if total_won[i] > total_won[j] {
+                                        1.0
+                                    } else if total_won[i] < total_won[j] {
+                                        0.0
+                                    } else {
+                                        0.5
+                                    };
+
+                                    let prob_i = Self::calculate_expected_win_prob(
+                                        agents_locked[i].elo,
+                                        agents_locked[j].elo,
+                                    );
+                                    let prob_j = Self::calculate_expected_win_prob(
+                                        agents_locked[j].elo,
+                                        agents_locked[i].elo,
+                                    );
+
+                                    let elo_diff_i =
+                                        Self::calculate_elo_diff(prob_i, player_i_result, elo_k);
+                                    let elo_diff_j = Self::calculate_elo_diff(
+                                        prob_j,
+                                        1.0 - player_i_result,
+                                        elo_k,
+                                    );
+
+                                    elo_diff[i] += elo_diff_i;
+                                    elo_diff[j] += elo_diff_j;
+                                }
+                            }
+
+                            // Update ELO
+                            for i in 0..player_count as usize {
+                                agents_locked[i].elo += elo_diff[i];
+                            }
                         }
 
                         // Print total won and new elo
@@ -225,18 +258,22 @@ impl Tournament {
 
         thread_pool.join();
 
+        // Remove all agents with a negative ELO
+        self.agents.retain(|agent| agent.lock().unwrap().elo >= 0.0);
+
         // Sort agents by ELO and print them
         self.agents
             .sort_by(|a, b| b.lock().unwrap().elo.total_cmp(&a.lock().unwrap().elo));
+
         for agent in &self.agents {
             let agent = agent.lock().unwrap();
             println!("Agent: {} - ELO: {}", agent.iteration, agent.elo,);
         }
     }
 
-    fn calculate_expected_win_prob(elo_a: f32, elo_b: f32, k: f32) -> f32 {
+    fn calculate_expected_win_prob(elo_a: f32, elo_b: f32) -> f32 {
         let elo_diff = elo_b - elo_a;
-        1.0 / (1.0 + 10.0f32.powf(elo_diff / k))
+        1.0 / (1.0 + 10.0f32.powf(elo_diff / 400.0))
     }
 
     fn calculate_elo_diff(expected_win_prob: f32, actual_win: f32, k: f32) -> f32 {
