@@ -708,7 +708,7 @@ impl<'a> Trainer<'a> {
             agent_pool.lock().unwrap().set_agents(&best_agents);
         } else {
             println!("Playing tournament...");
-            tournament.play(1000);
+            tournament.play(20000);
             println!("Done...");
             let best_agents = tournament.get_best_agents(self.trainer_config.agent_count as usize);
             agent_pool.lock().unwrap().set_agents(&best_agents);

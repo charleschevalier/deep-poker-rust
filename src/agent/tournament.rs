@@ -15,6 +15,7 @@ use crate::{
 };
 
 use super::{agent_network::AgentNetwork, Agent};
+use rand::prelude::SliceRandom;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
@@ -91,7 +92,7 @@ impl Tournament {
         self.agents.len()
     }
 
-    pub fn play(&mut self, rounds: usize) {
+    pub fn play(&mut self, total_hands: usize) {
         // Dynamically select agents based on Elo for each game
         self.agents
             .sort_by(|a, b| b.lock().unwrap().elo.total_cmp(&a.lock().unwrap().elo));
@@ -102,6 +103,8 @@ impl Tournament {
         let elo_k = 90.0;
 
         let batch_size = (self.agents.len() as f32 / n_workers as f32).ceil() as usize;
+        let rounds = total_hands / self.agents.len();
+        let hands_played_base = Arc::new(Mutex::new(vec![0usize; self.agents.len()]));
 
         for worker in 0..n_workers {
             let player_count = self.player_count;
@@ -111,12 +114,15 @@ impl Tournament {
             let action_config = self.action_config.clone();
             let device = self.device.clone();
             let agents_tournament = Arc::clone(&agents_tournament_base);
+            let hands_played = Arc::clone(&hands_played_base);
 
             thread_pool.execute(move || {
+                let mut rng = rand::thread_rng();
+
                 // Run the loop N times
                 for _ in 0..rounds {
                     for agent_index in start..end {
-                        let mut agents_game: Vec<Arc<Mutex<AgentTournament>>>;
+                        let mut agents_game: Vec<(usize, Arc<Mutex<AgentTournament>>)>;
 
                         // Lock the tournament agents to prepare the match
                         // Choose agents with closer Elo for fairer matches
@@ -139,6 +145,10 @@ impl Tournament {
                                 })
                                 .collect::<Vec<_>>();
 
+                            // Randomize elo differences to avoid always choosing the same players, especially at the start
+                            elo_differences.shuffle(&mut rng);
+
+                            // Sort by elo difference
                             elo_differences
                                 .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
 
@@ -146,7 +156,7 @@ impl Tournament {
                             agents_game = elo_differences
                                 .iter()
                                 .take((player_count - 1) as usize)
-                                .map(|&(index, _)| Arc::clone(&agents_locked[index]))
+                                .map(|&(index, _)| (index, Arc::clone(&agents_locked[index])))
                                 .collect::<Vec<_>>();
 
                             agents_game.push(current_agent);
@@ -206,13 +216,21 @@ impl Tournament {
                             let mut elo_diff = vec![0.0f32; player_count as usize];
                             for i in 0..player_count as usize {
                                 for j in i + 1..player_count as usize {
-                                    let player_i_result = if total_won[i] > total_won[j] {
-                                        1.0
-                                    } else if total_won[i] < total_won[j] {
-                                        0.0
-                                    } else {
-                                        0.5
-                                    };
+                                    // We dont want ELO to increase for negative rewards, or decrease for positive rewards
+                                    if (total_won[i] < -1e-4 && total_won[j] < -1e-4)
+                                        || (total_won[i] > 1e-4 && total_won[j] > 1e-4)
+                                    {
+                                        continue;
+                                    }
+
+                                    let player_i_result =
+                                        if (total_won[i] - total_won[j]).abs() < 1e-4 {
+                                            0.5
+                                        } else if total_won[i] > total_won[j] {
+                                            1.0
+                                        } else {
+                                            0.0
+                                        };
 
                                     let prob_i = Self::calculate_expected_win_prob(
                                         agents_locked[i].elo,
@@ -223,12 +241,32 @@ impl Tournament {
                                         agents_locked[i].elo,
                                     );
 
-                                    let elo_diff_i =
-                                        Self::calculate_elo_diff(prob_i, player_i_result, elo_k);
+                                    // Adjust K-factor based on the possible reward in the game
+                                    let max_to_win = action_config.buy_in as f32;
+
+                                    // let dyn_elo_k = if (total_won[i] < -1e-4
+                                    //     && total_won[j] < -1e-4)
+                                    //     || (total_won[i] > 1e-4 && total_won[j] > 1e-4)
+                                    // {
+                                    //     elo_k * ((total_won[i] - total_won[j]).abs() / 2.0)
+                                    //         / max_to_win
+                                    // } else {
+                                    //     let min_value = total_won[i].abs().min(total_won[j].abs());
+                                    //     elo_k * min_value / max_to_win
+                                    // };
+
+                                    let min_value = total_won[i].abs().min(total_won[j].abs());
+                                    let dyn_elo_k = elo_k * min_value / max_to_win;
+
+                                    let elo_diff_i = Self::calculate_elo_diff(
+                                        prob_i,
+                                        player_i_result,
+                                        dyn_elo_k,
+                                    );
                                     let elo_diff_j = Self::calculate_elo_diff(
                                         prob_j,
                                         1.0 - player_i_result,
-                                        elo_k,
+                                        dyn_elo_k,
                                     );
 
                                     elo_diff[i] += elo_diff_i;
@@ -239,6 +277,11 @@ impl Tournament {
                             // Update ELO
                             for i in 0..player_count as usize {
                                 agents_locked[i].elo += elo_diff[i];
+                            }
+
+                            let mut hp = hands_played.lock().unwrap();
+                            for i in 0..player_count as usize {
+                                hp[indexes[i]] += 1;
                             }
                         }
 
@@ -265,9 +308,14 @@ impl Tournament {
         self.agents
             .sort_by(|a, b| b.lock().unwrap().elo.total_cmp(&a.lock().unwrap().elo));
 
-        for agent in &self.agents {
-            let agent = agent.lock().unwrap();
-            println!("Agent: {} - ELO: {}", agent.iteration, agent.elo,);
+        for (index, agent) in self.agents.iter().enumerate() {
+            let ag = agent.lock().unwrap();
+            println!(
+                "Agent: {} - ELO: {} - Hands: {}",
+                ag.iteration,
+                ag.elo,
+                hands_played_base.lock().unwrap()[index]
+            );
         }
     }
 

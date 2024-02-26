@@ -1,13 +1,16 @@
 # deep-poker-rust
+
 Deep learning AI for poker in Rust
 
 This project was a way for me to test new things:
-- Rust
+
+- Rust ownership system & multi-threading
 - The candle deep learning library
-- Reinforcement learning w/ PPO
+- Self-play reinforcement learning w/ PPO
 
 It is based mostly on the AlphaHoldem paper, implementing:
-- Pseudo-siamese embedding layer with convolution
+
+- Pseudo-siamese embedding layer with convolution & residual connections
 - Actor / critic architecture
-- GAE
-- Trinal-clip PPO
+- Trinal-clip PPO taken from the paper
+- A pool of agents for self-play with ELO rating () a custom multi-player ELO rating
