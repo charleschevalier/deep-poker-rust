@@ -6,6 +6,7 @@ use std::{
 };
 
 use candle_core::Device;
+use indicatif::{ProgressBar, ProgressStyle};
 use rand::Rng;
 use threadpool::ThreadPool;
 
@@ -25,6 +26,8 @@ struct AgentTournament {
     elo: f32,
     iteration: u32,
     agent_network: Arc<Box<dyn Agent>>,
+    hands_played: usize,
+    over_max_rating: bool,
 }
 
 pub struct Tournament {
@@ -60,9 +63,11 @@ impl Tournament {
 
         self.agents.push(Arc::new(Mutex::new(AgentTournament {
             network_file,
-            elo: 1000.0,
+            elo: 1400.0,
             iteration,
             agent_network: Arc::new(Box::new(AgentNetwork::new(network))),
+            hands_played: 0,
+            over_max_rating: false,
         })));
         Ok(())
     }
@@ -98,13 +103,17 @@ impl Tournament {
             .sort_by(|a, b| b.lock().unwrap().elo.total_cmp(&a.lock().unwrap().elo));
 
         let agents_tournament_base = Arc::new(Mutex::new(self.agents.clone()));
-        let n_workers = num_cpus::get();
+        let n_workers = num_cpus::get() * 3 / 4;
         let thread_pool = ThreadPool::new(n_workers);
-        let elo_k = 90.0;
+        let elo_k = 40.0;
 
         let batch_size = (self.agents.len() as f32 / n_workers as f32).ceil() as usize;
         let rounds = total_hands / self.agents.len();
-        let hands_played_base = Arc::new(Mutex::new(vec![0usize; self.agents.len()]));
+
+        let progress_bar = Arc::new(ProgressBar::new(rounds as u64 * self.agents.len() as u64));
+        progress_bar.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos:>7}/{len:7} ({eta})").unwrap()
+        .progress_chars("#>-"));
 
         for worker in 0..n_workers {
             let player_count = self.player_count;
@@ -114,7 +123,7 @@ impl Tournament {
             let action_config = self.action_config.clone();
             let device = self.device.clone();
             let agents_tournament = Arc::clone(&agents_tournament_base);
-            let hands_played = Arc::clone(&hands_played_base);
+            let pb = Arc::clone(&progress_bar);
 
             thread_pool.execute(move || {
                 let mut rng = rand::thread_rng();
@@ -122,6 +131,7 @@ impl Tournament {
                 // Run the loop N times
                 for _ in 0..rounds {
                     for agent_index in start..end {
+                        pb.inc(1);
                         let mut agents_game: Vec<(usize, Arc<Mutex<AgentTournament>>)>;
 
                         // Lock the tournament agents to prepare the match
@@ -159,7 +169,7 @@ impl Tournament {
                                 .map(|&(index, _)| (index, Arc::clone(&agents_locked[index])))
                                 .collect::<Vec<_>>();
 
-                            agents_game.push(current_agent);
+                            agents_game.push((agent_index, current_agent));
                         }
 
                         // Assign each agent a random index between 0 and player_count
@@ -171,7 +181,7 @@ impl Tournament {
                                 let mut rng = rand::thread_rng();
                                 let vec_index = rng.gen_range(0..indexes_sorted.len());
                                 let agent_index = indexes_sorted[vec_index];
-                                let agent = agents_game[agent_index].lock().unwrap();
+                                let agent = agents_game[agent_index].1.lock().unwrap();
                                 tree_agents.push(Arc::clone(&agent.agent_network));
                                 indexes.push(agent_index);
                                 indexes_sorted.remove(vec_index);
@@ -197,7 +207,7 @@ impl Tournament {
                             // We need to lock all players at once to avoid deadlocks, or wait if one fails
                             loop {
                                 for arc_mutex in &agents_game {
-                                    match arc_mutex.try_lock() {
+                                    match arc_mutex.1.try_lock() {
                                         Ok(guard) => agents_locked.push(guard),
                                         Err(TryLockError::WouldBlock) => {
                                             agents_locked.clear(); // Release any acquired locks
@@ -216,12 +226,12 @@ impl Tournament {
                             let mut elo_diff = vec![0.0f32; player_count as usize];
                             for i in 0..player_count as usize {
                                 for j in i + 1..player_count as usize {
-                                    // We dont want ELO to increase for negative rewards, or decrease for positive rewards
-                                    if (total_won[i] < -1e-4 && total_won[j] < -1e-4)
-                                        || (total_won[i] > 1e-4 && total_won[j] > 1e-4)
-                                    {
-                                        continue;
-                                    }
+                                    // // We dont want ELO to increase for negative rewards, or decrease for positive rewards
+                                    // if (total_won[i] < -1e-4 && total_won[j] < -1e-4)
+                                    //     || (total_won[i] > 1e-4 && total_won[j] > 1e-4)
+                                    // {
+                                    //     continue;
+                                    // }
 
                                     let player_i_result =
                                         if (total_won[i] - total_won[j]).abs() < 1e-4 {
@@ -244,29 +254,42 @@ impl Tournament {
                                     // Adjust K-factor based on the possible reward in the game
                                     let max_to_win = action_config.buy_in as f32;
 
-                                    // let dyn_elo_k = if (total_won[i] < -1e-4
-                                    //     && total_won[j] < -1e-4)
-                                    //     || (total_won[i] > 1e-4 && total_won[j] > 1e-4)
-                                    // {
-                                    //     elo_k * ((total_won[i] - total_won[j]).abs() / 2.0)
-                                    //         / max_to_win
-                                    // } else {
-                                    //     let min_value = total_won[i].abs().min(total_won[j].abs());
-                                    //     elo_k * min_value / max_to_win
-                                    // };
+                                    let min_value = if (total_won[i] < -1e-4
+                                        && total_won[j] < -1e-4)
+                                        || (total_won[i] > 1e-4 && total_won[j] > 1e-4)
+                                    {
+                                        (total_won[i] - total_won[j]).abs()
+                                    } else {
+                                        total_won[i].abs().min(total_won[j].abs())
+                                    };
 
-                                    let min_value = total_won[i].abs().min(total_won[j].abs());
                                     let dyn_elo_k = elo_k * min_value / max_to_win;
+
+                                    let dyn_elo_k_i = if agents_locked[i].over_max_rating {
+                                        dyn_elo_k * 0.25
+                                    } else if agents_locked[i].hands_played > 100000 {
+                                        dyn_elo_k * 0.5
+                                    } else {
+                                        dyn_elo_k
+                                    };
+
+                                    let dyn_elo_k_j = if agents_locked[j].over_max_rating {
+                                        dyn_elo_k * 0.25
+                                    } else if agents_locked[j].hands_played > 100000 {
+                                        dyn_elo_k * 0.5
+                                    } else {
+                                        dyn_elo_k
+                                    };
 
                                     let elo_diff_i = Self::calculate_elo_diff(
                                         prob_i,
                                         player_i_result,
-                                        dyn_elo_k,
+                                        dyn_elo_k_i,
                                     );
                                     let elo_diff_j = Self::calculate_elo_diff(
                                         prob_j,
                                         1.0 - player_i_result,
-                                        dyn_elo_k,
+                                        dyn_elo_k_j,
                                     );
 
                                     elo_diff[i] += elo_diff_i;
@@ -277,23 +300,12 @@ impl Tournament {
                             // Update ELO
                             for i in 0..player_count as usize {
                                 agents_locked[i].elo += elo_diff[i];
-                            }
-
-                            let mut hp = hands_played.lock().unwrap();
-                            for i in 0..player_count as usize {
-                                hp[indexes[i]] += 1;
+                                agents_locked[i].hands_played += 1;
+                                if agents_locked[i].elo > 2400.0 {
+                                    agents_locked[i].over_max_rating = true;
+                                }
                             }
                         }
-
-                        // Print total won and new elo
-                        // let _unused = agents_tournament.lock().unwrap();
-                        // println!("Base elo: {:?}", base_elo);
-                        // println!("ELO diff: {:?}", elo_diff);
-                        // println!("Total won: {:?}", total_won);
-                        // for agent in &game_agents {
-                        //     let agent = agent.lock().unwrap();
-                        //     println!("Agent: {} - ELO: {}", agent.iteration, agent.elo,);
-                        // }
                     }
                 }
             });
@@ -308,14 +320,9 @@ impl Tournament {
         self.agents
             .sort_by(|a, b| b.lock().unwrap().elo.total_cmp(&a.lock().unwrap().elo));
 
-        for (index, agent) in self.agents.iter().enumerate() {
+        for agent in self.agents.iter() {
             let ag = agent.lock().unwrap();
-            println!(
-                "Agent: {} - ELO: {} - Hands: {}",
-                ag.iteration,
-                ag.elo,
-                hands_played_base.lock().unwrap()[index]
-            );
+            println!("Agent: {} - ELO: {}", ag.iteration, ag.elo);
         }
     }
 
@@ -333,7 +340,14 @@ impl Tournament {
 
         for agent in &self.agents {
             let agent = agent.lock().unwrap();
-            let line = format!("{};{};{}\n", agent.iteration, agent.elo, agent.network_file);
+            let line = format!(
+                "{};{};{};{};{}\n",
+                agent.iteration,
+                agent.elo,
+                agent.network_file,
+                agent.hands_played,
+                agent.over_max_rating
+            );
             file.write_all(line.as_bytes())
                 .expect("Failed to write to file");
         }
@@ -350,10 +364,22 @@ impl Tournament {
             let iteration = parts[0].parse::<u32>().unwrap();
             let elo = parts[1].parse::<f32>().unwrap();
             let network_file = parts[2].to_string();
+            let hands_played = if parts.len() > 3 {
+                parts[3].parse::<usize>().unwrap()
+            } else {
+                0
+            };
+            let over_max_rating = if parts.len() > 4 {
+                parts[4].parse::<bool>().unwrap()
+            } else {
+                false
+            };
             self.add_agent(network_file, iteration).unwrap();
             let agent = self.agents.last().unwrap();
             let mut agent = agent.lock().unwrap();
             agent.elo = elo;
+            agent.hands_played = hands_played;
+            agent.over_max_rating = over_max_rating;
         }
     }
 }

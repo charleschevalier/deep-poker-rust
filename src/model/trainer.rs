@@ -78,15 +78,6 @@ impl<'a> Trainer<'a> {
             &mut trained_network,
             &mut tournament,
         )?;
-        let out_path = Path::new(&self.output_path);
-        if !out_path
-            .join(format!("tournament_{}.txt", latest_iteration))
-            .exists()
-        {
-            println!("Refreshing agents...");
-            self.refresh_agents(Arc::clone(&agent_pool), &mut tournament, true)?;
-            tournament.save_state(out_path.join(format!("tournament_{}.txt", latest_iteration)));
-        }
 
         // Build optimizers
         println!("Building optimizers...");
@@ -113,7 +104,7 @@ impl<'a> Trainer<'a> {
         let mut optimizer_policy = AdamWCustom::new(
             trained_network.get_actor_vars(),
             ParamsAdamW {
-                lr: self.trainer_config.learning_rate,
+                lr: self.trainer_config.learning_rate / 10.0,
                 beta1: 0.95,
                 beta2: 0.995,
                 eps: 1e-8,
@@ -352,13 +343,14 @@ impl<'a> Trainer<'a> {
             }
 
             // self.test_clone(&trained_network, iteration as u32)?;
-
-            Tree::print_first_actions(
-                &trained_network.clone(),
-                &self.trainer_config.agents_device.clone(),
-                self.trainer_config.no_invalid_for_traverser,
-                self.action_config,
-            )?;
+            if iteration % 10 == 0 {
+                Tree::print_first_actions(
+                    &trained_network.clone(),
+                    &self.trainer_config.agents_device.clone(),
+                    self.trainer_config.no_invalid_for_traverser,
+                    self.action_config,
+                )?;
+            }
 
             // for _ in 0..10 {
             //     self.tree._play_one_hand(
@@ -370,12 +362,18 @@ impl<'a> Trainer<'a> {
 
             // Put a new agent in the pool every 100 iterations
             if iteration > 0
-                && (iteration % self.trainer_config.save_interval as usize == 0 || iteration == 25)
+                && (iteration % self.trainer_config.save_interval as usize == 0/*|| iteration == 25*/)
             {
                 let net_file =
                     Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration));
                 trained_network.save_var_map(net_file.clone())?;
+            }
 
+            if iteration > 0
+                && (iteration % self.trainer_config.new_agent_interval as usize == 0/*|| iteration == 25*/)
+            {
+                let net_file =
+                    Path::new(&self.output_path).join(&format!("poker_network_{}.pt", iteration));
                 tournament.add_agent(net_file.to_str().unwrap().to_string(), iteration as u32)?;
                 self.refresh_agents(Arc::clone(&agent_pool), &mut tournament, false)?;
                 tournament.save_state(
@@ -634,18 +632,24 @@ impl<'a> Trainer<'a> {
                 trained_network_path.join(format!("poker_network_{}.pt", latest_iteration)),
             )?;
 
-            if trained_network_path
-                .join(format!("tournament_{}.txt", latest_iteration))
-                .exists()
-            {
+            let latest_tournament_index =
+                latest_iteration - (latest_iteration % self.trainer_config.new_agent_interval);
+            let latest_tournament_path =
+                trained_network_path.join(format!("tournament_{}.txt", latest_tournament_index));
+
+            if latest_tournament_path.exists() {
                 println!("Tournament: Loading state");
-                tournament.load_state(
-                    trained_network_path.join(format!("tournament_{}.txt", latest_iteration)),
-                );
+                tournament.load_state(latest_tournament_path);
                 let best_agents =
                     tournament.get_best_agents(self.trainer_config.agent_count as usize);
                 let mut pool = agent_pool.lock().unwrap();
                 pool.set_agents(&best_agents);
+            } else {
+                println!("Refreshing agents...");
+                self.refresh_agents(Arc::clone(&agent_pool), tournament, true)?;
+                tournament.save_state(
+                    trained_network_path.join(format!("tournament_{}.txt", latest_iteration)),
+                );
             }
         }
 
@@ -674,9 +678,7 @@ impl<'a> Trainer<'a> {
                     let split = file_name[2].split('.').collect::<Vec<&str>>();
                     if (split.len() == 2) && (split[1] == "pt") {
                         let iteration = split[0].parse::<u32>()?;
-                        if iteration == 25
-                            || iteration % self.trainer_config.new_agent_interval == 0
-                        {
+                        if iteration % self.trainer_config.new_agent_interval == 0 {
                             model_files.push((
                                 iteration,
                                 trained_network_path
@@ -708,7 +710,7 @@ impl<'a> Trainer<'a> {
             agent_pool.lock().unwrap().set_agents(&best_agents);
         } else {
             println!("Playing tournament...");
-            tournament.play(20000);
+            tournament.play(400000);
             println!("Done...");
             let best_agents = tournament.get_best_agents(self.trainer_config.agent_count as usize);
             agent_pool.lock().unwrap().set_agents(&best_agents);

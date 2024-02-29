@@ -180,6 +180,25 @@ impl<'a> StatePlay<'a> {
             return;
         }
 
+        // No raise if we already more than max_action - player_count actions in the round
+        {
+            let mut action_cnt = 0;
+            for state in self.state_data.history.iter().rev() {
+                if state.street == self.state_data.street {
+                    action_cnt += 1;
+                } else {
+                    break;
+                }
+            }
+
+            let max_actions = self.state_data.player_count as usize * 3;
+            if action_cnt > max_actions - self.state_data.player_count as usize {
+                self.children.push(None);
+                self.valid_actions_mask.push(false);
+                return;
+            }
+        }
+
         let to_call = biggest_bet - self.get_to_move_bet();
         let raise: u32;
         let actual_bet: u32;
@@ -236,6 +255,29 @@ impl<'a> StatePlay<'a> {
     }
 
     fn handle_all_in(&mut self) {
+        // No raise if there is no all-in and we already have more than max_action - player_count actions in the round
+        {
+            let mut action_cnt = 0;
+            let mut has_all_in = false;
+            for state in self.state_data.history.iter().rev() {
+                if state.street == self.state_data.street {
+                    action_cnt += 1;
+                    if matches!(state.action_type, ActionType::AllIn) {
+                        has_all_in = true;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            let max_actions = self.state_data.player_count as usize * 3;
+            if !has_all_in && action_cnt > max_actions - self.state_data.player_count as usize {
+                self.children.push(None);
+                self.valid_actions_mask.push(false);
+                return;
+            }
+        }
+
         if self.get_to_move_stack() > 0 {
             let mut new_state_data = self.state_data.clone();
             new_state_data.bets[self.get_player_to_move() as usize] += self.get_to_move_stack();

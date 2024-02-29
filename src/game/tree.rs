@@ -87,29 +87,29 @@ impl<'a> Tree<'a> {
             panic!("State is None");
         }
 
-        // Make sure we do not have too much actions in hand_state
-        {
-            let mut action_cnt = 0;
-            let mut too_much = false;
-            let mut street = 0;
-            for action_state in hand_state.action_states.iter() {
-                if action_state.street == street {
-                    action_cnt += 1;
-                } else {
-                    street = action_state.street;
-                    action_cnt = 0;
-                }
+        // // Make sure we do not have too much actions in hand_state
+        // {
+        //     let mut action_cnt = 0;
+        //     let mut too_much = false;
+        //     let mut street = 0;
+        //     for action_state in hand_state.action_states.iter() {
+        //         if action_state.street == street {
+        //             action_cnt += 1;
+        //         } else {
+        //             street = action_state.street;
+        //             action_cnt = 0;
+        //         }
 
-                if action_cnt >= action_config.max_actions_per_street {
-                    too_much = true;
-                    break;
-                }
-            }
+        //         if action_cnt >= action_config.max_actions_per_street {
+        //             too_much = true;
+        //             break;
+        //         }
+        //     }
 
-            if too_much {
-                return Err("Too much actions".into());
-            }
-        }
+        //     if too_much {
+        //         return Err("Too much actions".into());
+        //     }
+        // }
 
         let state = state_option.as_mut().unwrap();
         let traverser = hand_state.traverser;
