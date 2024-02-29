@@ -19,18 +19,18 @@ fn main() {
     let trainer_config = TrainerConfig {
         learning_rate: 1e-5,
         max_iters: 500000,
-        hands_per_player_per_iteration: 256,
+        hands_per_player_per_iteration: 350,
         update_step: 10,
         ppo_epsilon: 0.2,
         ppo_delta_1: 3.0,
-        no_invalid_for_traverser: true,
-        new_agent_interval: 50,
-        save_interval: 50,
+        no_invalid_for_traverser: false,
+        new_agent_interval: 500,
+        save_interval: 100,
         agent_count: 2,
         use_epsilon_greedy: true,
-        epsilon_greedy_factor: 0.05, // 5% of random actions at start
+        epsilon_greedy_factor: 0.05, // 5% of random actions
         epsilon_greedy_decay: 0.9999,
-        use_entropy: true,
+        use_entropy: false,
         entropy_beta: 0.01,
         agents_device: Device::Cpu,
         agents_iterations_per_match: 200,
@@ -38,12 +38,15 @@ fn main() {
 
     let device = Device::cuda_if_available(0).unwrap();
 
+    let args: Vec<String> = env::args().collect();
+    let output = &args[1];
+
     let mut trainer = model::trainer::Trainer::new(
         3,
         &action_config,
         &trainer_config,
         device,
-        "/media/charles/CCH_BIG/deep_poker/",
+        output,
     );
     if let Err(err) = trainer.train() {
         println!("Error: {}", err);
