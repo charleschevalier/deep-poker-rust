@@ -14,11 +14,11 @@ It is based mostly on the [AlphaHoldem paper](https://ojs.aaai.org/index.php/AAA
 - Actor / critic architecture
 - Trinal-clip PPO
 - A pool of agents for self-play with ELO rating
-- Use of epsilon-greedy algorithm and entropy to favor exploration
+- Use of epsilon-greedy algorithm and entropy to favor exploration (do not seem to improve the convergence by much)
 
 ## Experiments
 
-I ran it on a 32-core CPU and a 8GB RTX 2070 GPU also used for display, so the model is not very big and would need to be larger to reach the same level of performance as AlphaHoldem. But it still converges to a valid strategy.
+I ran it on a 32-core CPU and a 8GB RTX 2070 GPU also used for display, so the model is not very big and would need to be larger to reach the same level of performance as AlphaHoldem. In consequence, convergence is very slow.
 
 My conclusion is that there are two very important factors to have good results with this approach:
 

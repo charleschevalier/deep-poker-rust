@@ -4,6 +4,7 @@
 use candle_core::Device;
 use model::trainer_config::TrainerConfig;
 use std::backtrace::Backtrace;
+use std::env;
 
 mod agent;
 mod game;
@@ -33,18 +34,15 @@ fn main() {
         use_entropy: false,
         entropy_beta: 0.01,
         agents_device: Device::Cpu,
-        agents_iterations_per_match: 200,
     };
 
     let device = Device::cuda_if_available(0).unwrap();
 
-    let mut trainer = model::trainer::Trainer::new(
-        3,
-        &action_config,
-        &trainer_config,
-        device,
-        "/media/charles/CCH_BIG/deep_poker/",
-    );
+    let args: Vec<String> = env::args().collect();
+    let output = &args[1];
+
+    let mut trainer =
+        model::trainer::Trainer::new(3, &action_config, &trainer_config, device, output);
     if let Err(err) = trainer.train() {
         println!("Error: {}", err);
 

@@ -648,7 +648,8 @@ impl<'a> Trainer<'a> {
                 println!("Refreshing agents...");
                 self.refresh_agents(Arc::clone(&agent_pool), tournament, true)?;
                 tournament.save_state(
-                    trained_network_path.join(format!("tournament_{}.txt", latest_iteration)),
+                    trained_network_path
+                        .join(format!("tournament_{}.txt", latest_tournament_index)),
                 );
             }
         }
